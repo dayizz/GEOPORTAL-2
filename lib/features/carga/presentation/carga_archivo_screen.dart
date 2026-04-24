@@ -8,6 +8,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../auth/providers/demo_provider.dart';
 import '../../mapa/providers/mapa_provider.dart';
+import '../data/archivos_geojson_repository.dart';
 import '../providers/carga_provider.dart';
 import '../services/sincronizacion_service.dart';
 
@@ -27,6 +28,25 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   PlatformFile? _archivoSeleccionado;
   Map<String, dynamic>? _geoJsonData;
   SincronizacionResultado? _syncResultado;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _cargarArchivosDesdeBD());
+  }
+
+  Future<void> _cargarArchivosDesdeBD() async {
+    final isDemo = ref.read(demoModeProvider);
+    if (isDemo) return;
+    try {
+      final repo = ref.read(archivosGeoJsonRepositoryProvider);
+      final rawList = await repo.getArchivos();
+      final bdFiles = rawList.map(ImportedFile.fromBD).toList();
+      ref.read(cargaProvider.notifier).initFromBD(bdFiles);
+    } catch (_) {
+      // Si la BD no está disponible, se muestran solo los archivos en memoria.
+    }
+  }
 
   Future<void> _seleccionarArchivo() async {
     final result = await FilePicker.platform.pickFiles(
@@ -201,22 +221,45 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     return null;
   }
 
-  // ── Envío al mapa ───────────────────────────────────────────
+  // ── Acciones sobre el GeoJSON ──────────────────────────────
 
-  /// Sincroniza los features con la BD y navega al mapa.
-  Future<void> _enviarAlMapa() async {
-    if (_geoJsonData == null) return;
-
+  /// Extrae la lista de features del GeoJSON parseado.
+  List<Map<String, dynamic>> _extraerFeatures() {
     final featuresList = _geoJsonData!['features'];
-    if (featuresList is! List) return;
+    if (featuresList is! List) return [];
+    return featuresList
+        .map(_asStringDynamicMap)
+        .whereType<Map<String, dynamic>>()
+        .toList();
+  }
 
-    final features = <Map<String, dynamic>>[];
-    for (final f in featuresList) {
-      final mapped = _asStringDynamicMap(f);
-      if (mapped != null) features.add(mapped);
-    }
-
+  /// Solo renderiza los features en el mapa, SIN guardar en la BD.
+  void _soloRenderizar() {
+    if (_geoJsonData == null) return;
+    final features = _extraerFeatures();
     if (features.isEmpty) return;
+
+    final nombre = _archivoSeleccionado?.name ??
+        'archivo_${DateTime.now().millisecondsSinceEpoch}';
+
+    ref.read(cargaProvider.notifier).addFile(
+      nombre,
+      features,
+      guardadoEnBD: false,
+      sincronizado: false,
+    );
+    ref.read(importedFeaturesProvider.notifier).state = features;
+    context.go('/mapa');
+  }
+
+  /// Sincroniza con la BD, guarda el archivo en `archivos_geojson` y navega al mapa.
+  Future<void> _guardarYVerEnMapa() async {
+    if (_geoJsonData == null) return;
+    final features = _extraerFeatures();
+    if (features.isEmpty) return;
+
+    final nombre = _archivoSeleccionado?.name ??
+        'archivo_${DateTime.now().millisecondsSinceEpoch}';
 
     setState(() {
       _sincronizando = true;
@@ -231,20 +274,44 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
       if (!mounted) return;
 
+      // Guardar archivo en la BD (solo si no es modo demo)
+      String? bdId;
+      if (!isDemo) {
+        try {
+          final archivosRepo = ref.read(archivosGeoJsonRepositoryProvider);
+          final saved = await archivosRepo.saveArchivo(
+            nombre: nombre,
+            features: resultado.features,
+            sincronizado: true,
+            encontrados: resultado.encontrados,
+            creados: resultado.creados,
+            errores: resultado.errores,
+          );
+          bdId = saved['id'] as String?;
+        } catch (_) {
+          // Si falla el guardado del archivo, continuar igualmente.
+        }
+      }
+
       setState(() {
         _syncResultado = resultado;
         _sincronizando = false;
-        _mensaje = 'Sincronización completa: '
+        _mensaje = 'Guardado. Sincronización: '
             '${resultado.encontrados} existentes, '
             '${resultado.creados} nuevos'
             '${resultado.errores > 0 ? ', ${resultado.errores} errores' : ''}';
         _exito = resultado.errores == 0;
       });
 
-      // Guardar en la lista de archivos importados
       ref.read(cargaProvider.notifier).addFile(
-        _archivoSeleccionado?.name ?? 'archivo_${DateTime.now().millisecondsSinceEpoch}',
+        nombre,
         resultado.features,
+        bdId: bdId,
+        guardadoEnBD: bdId != null,
+        sincronizado: true,
+        encontrados: resultado.encontrados,
+        creados: resultado.creados,
+        errores: resultado.errores,
       );
 
       ref.read(importedFeaturesProvider.notifier).state = resultado.features;
@@ -253,7 +320,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       if (!mounted) return;
       setState(() {
         _sincronizando = false;
-        _mensaje = 'Error en sincronización: $e';
+        _mensaje = 'Error: $e';
         _exito = false;
       });
     }
@@ -263,14 +330,21 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   void _verEnMapaDesdeTabla(String fileId) {
     final importedFiles = ref.read(cargaProvider);
     final file = importedFiles.firstWhere((f) => f.id == fileId);
-    
     ref.read(importedFeaturesProvider.notifier).state = file.features;
     context.go('/mapa');
   }
 
-  /// Elimina un archivo de la lista
-  void _eliminarArchivo(String fileId) {
-    ref.read(cargaProvider.notifier).removeFile(fileId);
+  /// Elimina un archivo: del provider en memoria y, si tiene bdId, también de la BD.
+  Future<void> _eliminarArchivo(ImportedFile file) async {
+    ref.read(cargaProvider.notifier).removeFile(file.id);
+    if (file.guardadoEnBD && file.bdId != null) {
+      try {
+        final repo = ref.read(archivosGeoJsonRepositoryProvider);
+        await repo.deleteArchivo(file.bdId!);
+      } catch (_) {
+        // Error silencioso: el archivo ya fue quitado de la UI.
+      }
+    }
   }
 
   Map<String, dynamic>? _asStringDynamicMap(dynamic value) {
@@ -541,28 +615,87 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
             ],
 
             const SizedBox(height: 28),
-            if (_archivoSeleccionado != null && _preview.isNotEmpty)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: (_loading || _sincronizando)
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 2),
-                        )
-                      : const Icon(Icons.sync_outlined),
-                  label: Text(
-                    _sincronizando
-                        ? 'Sincronizando…'
-                        : _loading
-                            ? 'Procesando...'
-                            : 'Sincronizar e importar al mapa',
-                  ),
-                  onPressed: (_loading || _sincronizando) ? null : _enviarAlMapa,
+            if (_archivoSeleccionado != null && _preview.isNotEmpty) ...[
+              // ── Dos botones de acción ──────────────────────────
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '¿Qué deseas hacer con este archivo?',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        // Botón 1: Solo renderizar
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.map_outlined, size: 18),
+                            label: const Text('Solo renderizar',
+                                style: TextStyle(fontSize: 13)),
+                            onPressed: (_loading || _sincronizando)
+                                ? null
+                                : _soloRenderizar,
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Botón 2: Guardar en BD
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: (_sincronizando)
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        color: Colors.white, strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.save_outlined, size: 18),
+                            label: Text(
+                              _sincronizando
+                                  ? 'Guardando…'
+                                  : 'Guardar en BD',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            onPressed: (_loading || _sincronizando)
+                                ? null
+                                : _guardarYVerEnMapa,
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline,
+                            size: 12, color: AppColors.textLight),
+                        const SizedBox(width: 4),
+                        const Expanded(
+                          child: Text(
+                            'Renderizar: visualiza en el mapa sin guardar.  '
+                            'Guardar en BD: sincroniza predios y persiste el archivo.',
+                            style: TextStyle(
+                                fontSize: 11, color: AppColors.textLight),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
+            ],
 
             // ── Tabla de archivos importados ────────────────────
             const SizedBox(height: 40),
@@ -608,127 +741,20 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: DataTable(
-                          columnSpacing: 12,
-                          horizontalMargin: 8,
-                          headingRowColor: MaterialStateColor.resolveWith(
-                            (states) => AppColors.secondary.withOpacity(0.08),
-                          ),
-                          columns: const [
-                            DataColumn(
-                              label: Text(
-                                'Archivo',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                            DataColumn(
-                              label: Text(
-                                'Features',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                            DataColumn(
-                              label: Text(
-                                'Importado',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                            DataColumn(
-                              label: Text(
-                                'Acciones',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ],
-                          rows: importedFiles.map((file) {
-                            return DataRow(
-                              cells: [
-                                DataCell(
-                                  Tooltip(
-                                    message: file.name,
-                                    child: Text(
-                                      file.name.length > 25
-                                          ? '${file.name.substring(0, 22)}...'
-                                          : file.name,
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
-                                  ),
-                                ),
-                                DataCell(
-                                  Text(
-                                    file.featureCount.toString(),
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ),
-                                DataCell(
-                                  Text(
-                                    file.formattedDate,
-                                    style: const TextStyle(fontSize: 11, color: AppColors.textLight),
-                                  ),
-                                ),
-                                DataCell(
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Tooltip(
-                                        message: 'Ver en mapa',
-                                        child: IconButton(
-                                          icon: const Icon(Icons.map_outlined, size: 18),
-                                          onPressed: () => _verEnMapaDesdeTabla(file.id),
-                                          constraints: const BoxConstraints(
-                                            minWidth: 32,
-                                            minHeight: 32,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                        ),
-                                      ),
-                                      Tooltip(
-                                        message: 'Eliminar',
-                                        child: IconButton(
-                                          icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.danger),
-                                          onPressed: () {
-                                            showDialog(
-                                              context: context,
-                                              builder: (ctx) => AlertDialog(
-                                                title: const Text('Eliminar archivo'),
-                                                content: Text(
-                                                  '\u00bfEst\u00e1s seguro de que deseas eliminar \"${file.name}\"?',
-                                                ),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () => Navigator.pop(ctx),
-                                                    child: const Text('Cancelar'),
-                                                  ),
-                                                  TextButton(
-                                                    onPressed: () {
-                                                      _eliminarArchivo(file.id);
-                                                      Navigator.pop(ctx);
-                                                    },
-                                                    child: const Text(
-                                                      'Eliminar',
-                                                      style: TextStyle(color: AppColors.danger),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                          },
-                                          constraints: const BoxConstraints(
-                                            minWidth: 32,
-                                            minHeight: 32,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            );
-                          }).toList(),
-                        ),
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: AppColors.border),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: importedFiles.length,
+                        separatorBuilder: (_, __) =>
+                            const Divider(height: 1, color: AppColors.border),
+                        itemBuilder: (_, idx) =>
+                            _buildArchivoTile(importedFiles[idx]),
+                      ),
                     ),
                   ],
                 );
@@ -736,6 +762,115 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── Tile de archivo en la lista ──────────────────────────
+
+  Widget _buildArchivoTile(ImportedFile file) {
+    final statusColor = file.guardadoEnBD ? AppColors.secondary : AppColors.textLight;
+    final statusIcon = file.guardadoEnBD ? Icons.cloud_done_outlined : Icons.cloud_off_outlined;
+    final statusLabel = file.guardadoEnBD ? 'Guardado en BD' : 'Solo en memoria';
+
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: statusColor.withOpacity(0.1),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(Icons.insert_drive_file_outlined, color: statusColor, size: 18),
+      ),
+      title: Text(
+        file.name.length > 40 ? '${file.name.substring(0, 37)}…' : file.name,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(statusIcon, size: 11, color: statusColor),
+              const SizedBox(width: 3),
+              Text(statusLabel,
+                  style: TextStyle(fontSize: 11, color: statusColor)),
+              if (file.sincronizado) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: AppColors.info.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '${file.encontrados} exist. / ${file.creados} nuevos'
+                    '${file.errores > 0 ? " / ${file.errores} err" : ""}',
+                    style:
+                        TextStyle(fontSize: 10, color: AppColors.info.withOpacity(0.8)),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          Text(
+            '${file.featureCount} features · ${file.formattedDate}',
+            style:
+                const TextStyle(fontSize: 11, color: AppColors.textLight),
+          ),
+        ],
+      ),
+      isThreeLine: true,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: 'Ver en mapa',
+            child: IconButton(
+              icon: const Icon(Icons.map_outlined, size: 18),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: () => _verEnMapaDesdeTabla(file.id),
+            ),
+          ),
+          Tooltip(
+            message: 'Eliminar',
+            child: IconButton(
+              icon: const Icon(Icons.delete_outline, size: 18,
+                  color: AppColors.danger),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: () => showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Eliminar archivo'),
+                  content: Text(
+                    '¿Eliminar "${file.name}"?'
+                    '${file.guardadoEnBD ? '\nSe borrará también de la base de datos.' : ''}',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancelar'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        _eliminarArchivo(file);
+                        Navigator.pop(ctx);
+                      },
+                      child: const Text('Eliminar',
+                          style: TextStyle(color: AppColors.danger)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -143,3 +143,32 @@ SELECT
   25.7200, -100.2900,
   id FROM propietarios WHERE rfc = 'INO001010DEF' LIMIT 1
 ON CONFLICT DO NOTHING;
+
+-- ============================================================
+-- 8. Tabla de archivos GeoJSON importados (persistencia)
+-- Ejecuta este bloque en Supabase Dashboard > SQL Editor
+-- ============================================================
+CREATE TABLE IF NOT EXISTS archivos_geojson (
+  id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+  nombre         TEXT        NOT NULL,
+  features_count INTEGER     NOT NULL DEFAULT 0,
+  features       JSONB       NOT NULL DEFAULT '[]',
+  sincronizado   BOOLEAN     NOT NULL DEFAULT false,
+  encontrados    INTEGER     NOT NULL DEFAULT 0,
+  creados        INTEGER     NOT NULL DEFAULT 0,
+  errores        INTEGER     NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ
+);
+
+ALTER TABLE archivos_geojson ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Ver archivos_geojson"
+  ON archivos_geojson FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Crear archivos_geojson"
+  ON archivos_geojson FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Actualizar archivos_geojson"
+  ON archivos_geojson FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "Eliminar archivos_geojson"
+  ON archivos_geojson FOR DELETE TO authenticated USING (true);
+
