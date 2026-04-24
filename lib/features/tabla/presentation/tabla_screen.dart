@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../auth/providers/demo_provider.dart';
 import '../../auth/providers/demo_data.dart';
+import '../../mapa/providers/mapa_provider.dart';
 import '../../predios/data/predios_repository.dart';
 import '../../predios/models/predio.dart';
 import '../../predios/providers/demo_predios_notifier.dart';
@@ -285,6 +287,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
 
     const rawWidths = <double>[
        44, // ACCIONES
+       40, // VER MAPA
       180, // PROPIETARIO
       110, // ID SEDATU
        50, // TRAMO
@@ -305,7 +308,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     ];
 
     const headers = <String>[
-      '', 'PROPIETARIO', 'ID SEDATU', 'TRAMO', 'TIPO', 'EJIDO',
+      '', 'MAPA', 'PROPIETARIO', 'ID SEDATU', 'TRAMO', 'TIPO', 'EJIDO',
       'KM INICIO', 'KM FIN', 'KM LIN', 'KM EF', 'M²',
       'C.O.P', 'COP FIRMADO', 'OFICIO',
       'POL.\nINS.', 'IDENT.', 'LEVANT.', 'NEGOC.',
@@ -405,57 +408,59 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
         children: [
           // ACCIONES
           _actionCell(p, widths[0]),
+          // VER EN MAPA
+          _mapCell(p, widths[1]),
           // PROPIETARIO
-          _dataCell(p.propietarioNombre ?? p.claveCatastral, widths[1],
+          _dataCell(p.propietarioNombre ?? p.claveCatastral, widths[2],
               color: tipoColor.withValues(alpha: 0.08)),
           // ID SEDATU
-          _dataCell(p.claveCatastral, widths[2],
+          _dataCell(p.claveCatastral, widths[3],
               style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
           // TRAMO
-          _tramoBadgeCell(p.tramo, widths[3]),
+          _tramoBadgeCell(p.tramo, widths[4]),
           // TIPO
-          _tipoBadgeCell(p.tipoPropiedad, tipoColor, widths[4]),
+          _tipoBadgeCell(p.tipoPropiedad, tipoColor, widths[5]),
           // EJIDO
-          _dataCell(p.ejido ?? '-', widths[5]),
+          _dataCell(p.ejido ?? '-', widths[6]),
           // KM INICIO
-          _numCell(p.kmInicio, widths[6], decimals: 4),
+          _numCell(p.kmInicio, widths[7], decimals: 4),
           // KM FIN
-          _numCell(p.kmFin, widths[7], decimals: 4),
+          _numCell(p.kmFin, widths[8], decimals: 4),
           // KM LIN
-          _numCell(p.kmLineales, widths[8], decimals: 4),
+          _numCell(p.kmLineales, widths[9], decimals: 4),
           // KM EF
-          _numCell(p.kmEfectivos, widths[9], decimals: 4),
+          _numCell(p.kmEfectivos, widths[10], decimals: 4),
           // M²
-          _numCell(p.superficie, widths[10], decimals: 2),
+          _numCell(p.superficie, widths[11], decimals: 2),
           // COP (tappable toggle)
           _tappableBoolCell(
-            p.cop, widths[11],
+            p.cop, widths[12],
             trueColor: AppColors.secondary,
             falseColor: Colors.grey.shade400,
             onTap: () => _savePredio(p.copyWith(cop: !p.cop, updatedAt: DateTime.now())),
           ),
           // COP FIRMADO
-          _dataCell(p.copFirmado ?? '-', widths[12]),
+          _dataCell(p.copFirmado ?? '-', widths[13]),
           // OFICIO
-          _dataCell(p.oficio ?? '-', widths[13]),
+          _dataCell(p.oficio ?? '-', widths[14]),
           // POLÍGONO INSERTADO (tappable)
           _tappableBoolCell(
-            p.poligonoInsertado, widths[14],
+            p.poligonoInsertado, widths[15],
             onTap: () => _savePredio(p.copyWith(poligonoInsertado: !p.poligonoInsertado, updatedAt: DateTime.now())),
           ),
           // IDENTIFICACION (tappable)
           _tappableBoolCell(
-            p.identificacion, widths[15],
+            p.identificacion, widths[16],
             onTap: () => _savePredio(p.copyWith(identificacion: !p.identificacion, updatedAt: DateTime.now())),
           ),
           // LEVANTAMIENTO (tappable)
           _tappableBoolCell(
-            p.levantamiento, widths[16],
+            p.levantamiento, widths[17],
             onTap: () => _savePredio(p.copyWith(levantamiento: !p.levantamiento, updatedAt: DateTime.now())),
           ),
           // NEGOCIACION (tappable)
           _tappableBoolCell(
-            p.negociacion, widths[17],
+            p.negociacion, widths[18],
             onTap: () => _savePredio(p.copyWith(negociacion: !p.negociacion, updatedAt: DateTime.now())),
           ),
         ],
@@ -474,6 +479,36 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
         ),
         child: const Icon(Icons.edit_outlined, size: 16, color: AppColors.primary),
+      ),
+    );
+  }
+
+  /// Botón "Ver en Mapa": navega al mapa y hace fly-to al predio.
+  Widget _mapCell(Predio p, double width) {
+    final tieneGeometria = p.geometry != null ||
+        (p.latitud != null && p.longitud != null);
+    return Tooltip(
+      message: tieneGeometria ? 'Ver en mapa' : 'Sin geometría registrada',
+      child: InkWell(
+        onTap: tieneGeometria
+            ? () {
+                ref.read(focusPredioIdProvider.notifier).state = p.id;
+                context.go('/mapa');
+              }
+            : null,
+        child: Container(
+          width: width,
+          height: double.infinity,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+          ),
+          child: Icon(
+            Icons.map_outlined,
+            size: 16,
+            color: tieneGeometria ? AppColors.secondary : Colors.grey.shade300,
+          ),
+        ),
       ),
     );
   }

@@ -6,8 +6,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../shared/widgets/app_scaffold.dart';
+import '../../auth/providers/demo_provider.dart';
 import '../../mapa/providers/mapa_provider.dart';
 import '../providers/carga_provider.dart';
+import '../services/sincronizacion_service.dart';
 
 class CargaArchivoScreen extends ConsumerStatefulWidget {
   const CargaArchivoScreen({super.key});
@@ -18,11 +20,13 @@ class CargaArchivoScreen extends ConsumerStatefulWidget {
 
 class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   bool _loading = false;
+  bool _sincronizando = false;
   String? _mensaje;
   bool _exito = false;
   List<Map<String, dynamic>> _preview = [];
   PlatformFile? _archivoSeleccionado;
   Map<String, dynamic>? _geoJsonData;
+  SincronizacionResultado? _syncResultado;
 
   Future<void> _seleccionarArchivo() async {
     final result = await FilePicker.platform.pickFiles(
@@ -199,47 +203,59 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
   // ── Envío al mapa ───────────────────────────────────────────
 
-  /// Guarda los features en el provider de importación y navega al mapa.
-  void _enviarAlMapa() {
-    if (_geoJsonData == null) {
-      print('❌ _geoJsonData es null');
-      return;
+  /// Sincroniza los features con la BD y navega al mapa.
+  Future<void> _enviarAlMapa() async {
+    if (_geoJsonData == null) return;
+
+    final featuresList = _geoJsonData!['features'];
+    if (featuresList is! List) return;
+
+    final features = <Map<String, dynamic>>[];
+    for (final f in featuresList) {
+      final mapped = _asStringDynamicMap(f);
+      if (mapped != null) features.add(mapped);
     }
 
+    if (features.isEmpty) return;
+
+    setState(() {
+      _sincronizando = true;
+      _mensaje = 'Sincronizando con la base de datos…';
+      _exito = true;
+    });
+
     try {
-      final featuresList = _geoJsonData!['features'];
-      if (featuresList is! List) {
-        print('❌ features no es una List: ${featuresList.runtimeType}');
-        return;
-      }
+      final isDemo = ref.read(demoModeProvider);
+      final syncService = ref.read(sincronizacionServiceProvider);
+      final resultado = await syncService.sincronizar(features, isDemo: isDemo);
 
-      final features = <Map<String, dynamic>>[];
-      for (final f in featuresList) {
-        final mapped = _asStringDynamicMap(f);
-        if (mapped != null) {
-          final geo = mapped['geometry'] as Map<String, dynamic>?;
-          final props = mapped['properties'] as Map<String, dynamic>?;
-          print('✅ Feature: geom=${geo?["type"] ?? "null"}, props=${props?.keys.toList() ?? "null"}');
-          features.add(mapped);
-        }
-      }
+      if (!mounted) return;
 
-      print('📤 Enviando ${features.length} features al mapa...');
-      if (features.isEmpty) {
-        print('⚠️ Ningún feature válido para enviar');
-        return;
-      }
+      setState(() {
+        _syncResultado = resultado;
+        _sincronizando = false;
+        _mensaje = 'Sincronización completa: '
+            '${resultado.encontrados} existentes, '
+            '${resultado.creados} nuevos'
+            '${resultado.errores > 0 ? ', ${resultado.errores} errores' : ''}';
+        _exito = resultado.errores == 0;
+      });
 
       // Guardar en la lista de archivos importados
       ref.read(cargaProvider.notifier).addFile(
         _archivoSeleccionado?.name ?? 'archivo_${DateTime.now().millisecondsSinceEpoch}',
-        features,
+        resultado.features,
       );
 
-      ref.read(importedFeaturesProvider.notifier).state = features;
+      ref.read(importedFeaturesProvider.notifier).state = resultado.features;
       context.go('/mapa');
     } catch (e) {
-      print('❌ Error en _enviarAlMapa: $e');
+      if (!mounted) return;
+      setState(() {
+        _sincronizando = false;
+        _mensaje = 'Error en sincronización: $e';
+        _exito = false;
+      });
     }
   }
 
@@ -424,11 +440,14 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
               ),
             ),
 
-            if (_loading) ...[
+            if (_loading || _sincronizando) ...[
               const SizedBox(height: 16),
               const LinearProgressIndicator(),
               const SizedBox(height: 6),
-              const Text('Leyendo archivo…', style: TextStyle(fontSize: 12, color: AppColors.textLight)),
+              Text(
+                _sincronizando ? 'Sincronizando con la base de datos…' : 'Leyendo archivo…',
+                style: const TextStyle(fontSize: 12, color: AppColors.textLight),
+              ),
             ],
 
             if (_mensaje != null) ...[
@@ -526,16 +545,22 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  icon: _loading
+                  icon: (_loading || _sincronizando)
                       ? const SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(
                               color: Colors.white, strokeWidth: 2),
                         )
-                      : const Icon(Icons.map_outlined),
-                  label: Text(_loading ? 'Procesando...' : 'Ver en mapa'),
-                  onPressed: _loading ? null : _enviarAlMapa,
+                      : const Icon(Icons.sync_outlined),
+                  label: Text(
+                    _sincronizando
+                        ? 'Sincronizando…'
+                        : _loading
+                            ? 'Procesando...'
+                            : 'Sincronizar e importar al mapa',
+                  ),
+                  onPressed: (_loading || _sincronizando) ? null : _enviarAlMapa,
                 ),
               ),
 

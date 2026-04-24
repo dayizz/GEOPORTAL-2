@@ -76,6 +76,27 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     final importedMarkers = _buildImportedMarkers(importedPolygons);
     _focusImportedIfNeeded(importedFeatures, importedPolygons);
 
+    // Focus desde Gestión/Propietarios: fly-to al predio solicitado.
+    final focusId = ref.watch(focusPredioIdProvider);
+    if (focusId != null) {
+      prediosAsync.whenData((predios) {
+        try {
+          final predio = predios.firstWhere((p) => p.id == focusId);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _flyToPredio(predio);
+            ref.read(focusPredioIdProvider.notifier).state = null;
+            setState(() => _selectedPredio = predio);
+          });
+        } catch (_) {
+          // Predio no encontrado en la lista actual — limpiar el provider.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) ref.read(focusPredioIdProvider.notifier).state = null;
+          });
+        }
+      });
+    }
+
     return AppScaffold(
       currentIndex: 0,
       title: 'Mapa LDDV',
@@ -455,8 +476,37 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     return LatLng(lat, lng);
   }
 
-  void _focusImportedIfNeeded(List<Map<String, dynamic>> features, List<Polygon> polygons) {
-    if (features.isEmpty || polygons.isEmpty) {
+  /// Centra el mapa en el predio dado (polígono o punto).
+  void _flyToPredio(Predio predio) {
+    try {
+      final rings = _extractRings(predio.geometry);
+      if (rings.isNotEmpty && rings.first.isNotEmpty) {
+        final allPoints = <LatLng>[];
+        for (final ring in rings) {
+          allPoints.addAll(ring);
+        }
+        final bounds = LatLngBounds(allPoints.first, allPoints.first);
+        for (final point in allPoints.skip(1)) {
+          bounds.extend(point);
+        }
+        _mapCtrl.fitCamera(
+          CameraFit.bounds(
+            bounds: bounds,
+            padding: const EdgeInsets.all(80),
+          ),
+        );
+        return;
+      }
+      // Fallback: coordenadas directas
+      if (predio.latitud != null && predio.longitud != null) {
+        _mapCtrl.move(LatLng(predio.latitud!, predio.longitud!), 16.0);
+      }
+    } catch (_) {
+      // Controlador no listo todavía — ignorar silenciosamente.
+    }
+  }
+
+  void _focusImportedIfNeeded(List<Map<String, dynamic>> features, List<Polygon> polygons) {    if (features.isEmpty || polygons.isEmpty) {
       _lastImportedFeaturesIdentity = null;
       return;
     }

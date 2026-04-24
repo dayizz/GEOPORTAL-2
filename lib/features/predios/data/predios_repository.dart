@@ -60,6 +60,19 @@ class PrediosRepository {
     return Predio.fromMap(response);
   }
 
+  /// Busca un predio por clave catastral. Devuelve el mapa crudo (con join de
+  /// propietarios) para que el motor de sincronización pueda inyectar los datos
+  /// directamente en las properties del feature GeoJSON.
+  Future<Map<String, dynamic>?> buscarPorClaveCatastral(String clave) async {
+    final response = await _client
+        .from('predios')
+        .select('*, propietarios(*)')
+        .eq('clave_catastral', clave)
+        .maybeSingle();
+
+    return response != null ? Map<String, dynamic>.from(response) : null;
+  }
+
   Future<Predio> createPredio(Map<String, dynamic> data) async {
     final response = await _client
         .from('predios')
