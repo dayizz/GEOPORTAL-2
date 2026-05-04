@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/auth/providers/auth_provider.dart';
-import '../../features/auth/providers/demo_provider.dart';
 import '../../features/mapa/presentation/mapa_screen.dart';
 import '../../features/predios/presentation/predios_list_screen.dart';
 import '../../features/predios/presentation/predio_detail_screen.dart';
@@ -15,17 +14,18 @@ import '../../features/propietarios/presentation/propietario_detail_screen.dart'
 import '../../features/reportes/presentation/reportes_screen.dart';
 import '../../features/carga/presentation/carga_archivo_screen.dart';
 import '../../features/tabla/presentation/tabla_screen.dart';
+import '../../features/tabla/presentation/gestion_predio_detail_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Observar cambios de auth para refrescar el redirect
   ref.watch(authStateProvider);
-  final isDemo = ref.watch(demoModeProvider);
+  final localSession = ref.watch(localAuthSessionProvider);
 
   return GoRouter(
     initialLocation: '/mapa',
     redirect: (context, state) {
       final user = Supabase.instance.client.auth.currentUser;
-      final isLoggedIn = user != null || isDemo;
+      final isLoggedIn = user != null || localSession;
       final isLoginRoute = state.matchedLocation == '/login';
 
       if (!isLoggedIn && !isLoginRoute) return '/login';
@@ -43,7 +43,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/mapa',
-        builder: (_, __) => const MapaScreen(),
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: MapaScreen(),
+        ),
       ),
       GoRoute(
         path: '/predios',
@@ -92,15 +94,29 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/reportes',
-        builder: (_, __) => const ReportesScreen(),
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: ReportesScreen(),
+        ),
       ),
       GoRoute(
         path: '/carga',
-        builder: (_, __) => const CargaArchivoScreen(),
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: CargaArchivoScreen(),
+        ),
       ),
       GoRoute(
         path: '/tabla',
-        builder: (_, __) => const TablaScreen(),
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: TablaScreen(),
+        ),
+        routes: [
+          GoRoute(
+            path: 'predio/:id',
+            builder: (_, state) => GestionPredioDetailScreen(
+              id: state.pathParameters['id']!,
+            ),
+          ),
+        ],
       ),
       GoRoute(
         path: '/proyectos',

@@ -55,7 +55,7 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
     final fmtInt = NumberFormat('#,##0', 'es_MX');
 
     return AppScaffold(
-      currentIndex: 2,
+      currentIndex: 1,
       title: 'Balance  •  $_proyectoActual',
       child: prediosAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),

@@ -172,3 +172,72 @@ CREATE POLICY "Actualizar archivos_geojson"
 CREATE POLICY "Eliminar archivos_geojson"
   ON archivos_geojson FOR DELETE TO authenticated USING (true);
 
+-- ============================================================
+-- 9. MIGRACIÓN: Columnas de Gestión para la tabla predios
+-- Ejecuta este bloque en Supabase Dashboard > SQL Editor
+-- si la tabla predios fue creada con el esquema original (sección 3).
+-- ============================================================
+ALTER TABLE predios
+  ADD COLUMN IF NOT EXISTS tramo              TEXT        NOT NULL DEFAULT 'T1',
+  ADD COLUMN IF NOT EXISTS tipo_propiedad     TEXT        NOT NULL DEFAULT 'PRIVADA',
+  ADD COLUMN IF NOT EXISTS ejido              TEXT,
+  ADD COLUMN IF NOT EXISTS km_inicio          NUMERIC(10,3),
+  ADD COLUMN IF NOT EXISTS km_fin             NUMERIC(10,3),
+  ADD COLUMN IF NOT EXISTS km_lineales        NUMERIC(10,4),
+  ADD COLUMN IF NOT EXISTS km_efectivos       NUMERIC(10,4),
+  ADD COLUMN IF NOT EXISTS propietario_nombre TEXT,
+  ADD COLUMN IF NOT EXISTS proyecto           TEXT,
+  ADD COLUMN IF NOT EXISTS cop                BOOLEAN     NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS cop_firmado        TEXT,
+  ADD COLUMN IF NOT EXISTS poligono_dwg       TEXT,
+  ADD COLUMN IF NOT EXISTS oficio             TEXT,
+  ADD COLUMN IF NOT EXISTS poligono_insertado BOOLEAN     NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS identificacion     BOOLEAN     NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS levantamiento      BOOLEAN     NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS negociacion        BOOLEAN     NOT NULL DEFAULT false;
+
+-- Índices adicionales para búsqueda rápida por gestión
+CREATE INDEX IF NOT EXISTS idx_predios_tramo          ON predios(tramo);
+CREATE INDEX IF NOT EXISTS idx_predios_tipo_propiedad ON predios(tipo_propiedad);
+CREATE INDEX IF NOT EXISTS idx_predios_cop            ON predios(cop);
+CREATE INDEX IF NOT EXISTS idx_predios_proyecto       ON predios(proyecto);
+
+-- ============================================================
+-- 10. RPC: Endpoint lógico /api/predios/vincular
+-- Permite vincular manualmente un polígono con un registro de Gestión.
+-- Payload equivalente:
+-- {"id_poligono":"...", "id_gestion":"...", "geometry":{...}}
+-- ============================================================
+
+-- Columna opcional para guardar el identificador del polígono origen
+ALTER TABLE predios
+  ADD COLUMN IF NOT EXISTS id_poligono TEXT;
+
+CREATE OR REPLACE FUNCTION public.api_predios_vincular(
+  p_id_poligono TEXT,
+  p_id_gestion UUID,
+  p_geometry JSONB
+)
+RETURNS SETOF predios
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  UPDATE predios
+  SET
+    id_poligono = p_id_poligono,
+    geometry = p_geometry,
+    poligono_insertado = true,
+    updated_at = NOW()
+  WHERE id = p_id_gestion;
+
+  RETURN QUERY
+    SELECT *
+    FROM predios
+    WHERE id = p_id_gestion;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.api_predios_vincular(TEXT, UUID, JSONB)
+TO authenticated;
+

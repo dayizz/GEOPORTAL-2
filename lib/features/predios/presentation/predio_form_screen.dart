@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/predios_provider.dart';
 import '../providers/demo_predios_notifier.dart';
+import '../providers/local_predios_provider.dart';
 import '../data/predios_repository.dart';
 import '../models/predio.dart';
 import '../../auth/providers/demo_provider.dart';
@@ -44,6 +45,7 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
   bool _identificacion = false;
   bool _levantamiento = false;
   bool _negociacion = false;
+  String _estatusPredio = 'No liberado';
   String? _propietarioId;
 
   @override
@@ -58,7 +60,7 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
 
   Future<void> _loadPredio() async {
     try {
-      final predio = await ref.read(prediosRepositoryProvider).getPredioById(widget.id!);
+      final predio = await ref.read(predioDetalleProvider(widget.id!).future);
       if (predio != null && mounted) {
         _claveCtrl.text = predio.claveCatastral;
         _ejidoCtrl.text = predio.ejido ?? '';
@@ -80,6 +82,7 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
         _identificacion = predio.identificacion;
         _levantamiento = predio.levantamiento;
         _negociacion = predio.negociacion;
+        _estatusPredio = predio.cop ? 'Liberado' : 'No liberado';
         _propietarioId = predio.propietarioId;
       }
     } finally {
@@ -105,8 +108,12 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
 
     try {
       final isDemo = ref.read(demoModeProvider);
+      final isEdit = widget.id != null;
+      final isLocalPredio = isEdit && widget.id!.startsWith('local-');
+      final estatusLiberado = _estatusPredio == 'Liberado';
+      final estatusNoLiberado = _estatusPredio == 'No liberado';
 
-      if (isDemo && widget.id != null) {
+      if (isDemo && isEdit) {
         // En modo demo: actualizar estado local
         final predioActual = ref
             .read(demoPrediosNotifierProvider)
@@ -121,20 +128,48 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
           kmLineales: _kmLinealesCtrl.text.isEmpty ? null : double.tryParse(_kmLinealesCtrl.text),
           kmEfectivos: _kmEfectivosCtrl.text.isEmpty ? null : double.tryParse(_kmEfectivosCtrl.text),
           superficie: _superficieCtrl.text.isEmpty ? null : double.tryParse(_superficieCtrl.text),
-          cop: _cop,
+          cop: estatusLiberado,
           copFirmado: _copFirmadoCtrl.text.isEmpty ? null : _copFirmadoCtrl.text.trim(),
           poligonoDwg: _poligonoDwgCtrl.text.isEmpty ? null : _poligonoDwgCtrl.text.trim(),
           oficio: _oficioCtrl.text.isEmpty ? null : _oficioCtrl.text.trim(),
           poligonoInsertado: _poligonoInsertado,
           identificacion: _identificacion,
           levantamiento: _levantamiento,
-          negociacion: _negociacion,
+          negociacion: estatusNoLiberado,
           latitud: _latCtrl.text.isEmpty ? null : double.tryParse(_latCtrl.text),
           longitud: _lngCtrl.text.isEmpty ? null : double.tryParse(_lngCtrl.text),
           propietarioNombre: _propietarioNombreCtrl.text.isEmpty ? null : _propietarioNombreCtrl.text.trim(),
           updatedAt: DateTime.now(),
         );
         ref.read(demoPrediosNotifierProvider.notifier).updatePredio(actualizado);
+      } else if (isLocalPredio) {
+        final localState = ref.read(localPrediosProvider);
+        final predioActual = localState.firstWhere((p) => p.id == widget.id);
+        final actualizado = predioActual.copyWith(
+          claveCatastral: _claveCtrl.text.trim(),
+          tramo: _tramo,
+          tipoPropiedad: _tipoPropiedad,
+          ejido: _ejidoCtrl.text.isEmpty ? null : _ejidoCtrl.text.trim(),
+          kmInicio: _kmInicioCtrl.text.isEmpty ? null : double.tryParse(_kmInicioCtrl.text),
+          kmFin: _kmFinCtrl.text.isEmpty ? null : double.tryParse(_kmFinCtrl.text),
+          kmLineales: _kmLinealesCtrl.text.isEmpty ? null : double.tryParse(_kmLinealesCtrl.text),
+          kmEfectivos: _kmEfectivosCtrl.text.isEmpty ? null : double.tryParse(_kmEfectivosCtrl.text),
+          superficie: _superficieCtrl.text.isEmpty ? null : double.tryParse(_superficieCtrl.text),
+          cop: estatusLiberado,
+          copFirmado: _copFirmadoCtrl.text.isEmpty ? null : _copFirmadoCtrl.text.trim(),
+          poligonoDwg: _poligonoDwgCtrl.text.isEmpty ? null : _poligonoDwgCtrl.text.trim(),
+          oficio: _oficioCtrl.text.isEmpty ? null : _oficioCtrl.text.trim(),
+          poligonoInsertado: _poligonoInsertado,
+          identificacion: _identificacion,
+          levantamiento: _levantamiento,
+          negociacion: estatusNoLiberado,
+          latitud: _latCtrl.text.isEmpty ? null : double.tryParse(_latCtrl.text),
+          longitud: _lngCtrl.text.isEmpty ? null : double.tryParse(_lngCtrl.text),
+          propietarioNombre: _propietarioNombreCtrl.text.isEmpty ? null : _propietarioNombreCtrl.text.trim(),
+          propietarioId: _propietarioId,
+          updatedAt: DateTime.now(),
+        );
+        ref.read(localPrediosProvider.notifier).updatePredio(actualizado);
       } else {
         final data = {
           'clave_catastral': _claveCtrl.text.trim(),
@@ -146,14 +181,14 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
           'km_lineales': _kmLinealesCtrl.text.isEmpty ? null : double.tryParse(_kmLinealesCtrl.text),
           'km_efectivos': _kmEfectivosCtrl.text.isEmpty ? null : double.tryParse(_kmEfectivosCtrl.text),
           'superficie': _superficieCtrl.text.isEmpty ? null : double.tryParse(_superficieCtrl.text),
-          'cop': _cop,
+          'cop': estatusLiberado,
           'cop_firmado': _copFirmadoCtrl.text.isEmpty ? null : _copFirmadoCtrl.text.trim(),
           'poligono_dwg': _poligonoDwgCtrl.text.isEmpty ? null : _poligonoDwgCtrl.text.trim(),
           'oficio': _oficioCtrl.text.isEmpty ? null : _oficioCtrl.text.trim(),
           'poligono_insertado': _poligonoInsertado,
           'identificacion': _identificacion,
           'levantamiento': _levantamiento,
-          'negociacion': _negociacion,
+          'negociacion': estatusNoLiberado,
           'latitud': _latCtrl.text.isEmpty ? null : double.tryParse(_latCtrl.text),
           'longitud': _lngCtrl.text.isEmpty ? null : double.tryParse(_lngCtrl.text),
           'propietario_nombre': _propietarioNombreCtrl.text.isEmpty ? null : _propietarioNombreCtrl.text.trim(),
@@ -161,7 +196,7 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
         };
 
         final repo = ref.read(prediosRepositoryProvider);
-        if (widget.id == null) {
+        if (!isEdit) {
           await repo.createPredio(data);
         } else {
           await repo.updatePredio(widget.id!, data);
@@ -179,7 +214,11 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
             backgroundColor: AppColors.secondary,
           ),
         );
-        context.pop();
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/predios');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -330,12 +369,58 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
                 )),
               ]),
               const SizedBox(height: 24),
+              _buildSectionTitle('Estatus del Predio', Icons.flag_outlined),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _estatusPredio,
+                decoration: const InputDecoration(
+                  labelText: 'Estatus',
+                  prefixIcon: Icon(Icons.verified_outlined),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'Liberado', child: Text('Liberado')),
+                  DropdownMenuItem(value: 'No liberado', child: Text('No liberado')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() {
+                    _estatusPredio = v;
+                    _cop = v == 'Liberado';
+                    _negociacion = v == 'No liberado';
+                  });
+                },
+              ),
+              const SizedBox(height: 24),
               _buildSectionTitle('Avance DDV', Icons.checklist_outlined),
               const SizedBox(height: 8),
               CheckboxListTile(title: const Text('Identificacion'), value: _identificacion, onChanged: (v) => setState(() => _identificacion = v ?? false), dense: true),
               CheckboxListTile(title: const Text('Levantamiento'), value: _levantamiento, onChanged: (v) => setState(() => _levantamiento = v ?? false), dense: true),
-              CheckboxListTile(title: const Text('Negociacion'), value: _negociacion, onChanged: (v) => setState(() => _negociacion = v ?? false), dense: true),
-              CheckboxListTile(title: const Text('COP firmado'), value: _cop, onChanged: (v) => setState(() => _cop = v ?? false), dense: true),
+              CheckboxListTile(
+                title: const Text('Negociacion'),
+                value: _negociacion,
+                onChanged: (v) => setState(() {
+                  _negociacion = v ?? false;
+                  if (_negociacion) {
+                    _cop = false;
+                    _estatusPredio = 'No liberado';
+                  }
+                }),
+                dense: true,
+              ),
+              CheckboxListTile(
+                title: const Text('COP firmado'),
+                value: _cop,
+                onChanged: (v) => setState(() {
+                  _cop = v ?? false;
+                  if (_cop) {
+                    _negociacion = false;
+                    _estatusPredio = 'Liberado';
+                  } else {
+                    _estatusPredio = 'No liberado';
+                  }
+                }),
+                dense: true,
+              ),
               CheckboxListTile(title: const Text('Poligono Insertado'), value: _poligonoInsertado, onChanged: (v) => setState(() => _poligonoInsertado = v ?? false), dense: true),
               const SizedBox(height: 32),
               SizedBox(
@@ -399,7 +484,7 @@ class _PropietarioSelectorState extends ConsumerState<_PropietarioSelector> {
         ),
         const SizedBox(height: 8),
         propietariosAsync.when(
-          loading: () => const LinearProgressIndicator(),
+          loading: () => const SizedBox.shrink(),
           error: (e, _) => Text(e.toString()),
           data: (propietarios) {
             if (propietarios.isEmpty) {

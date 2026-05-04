@@ -1,9 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/predios_repository.dart';
 import '../models/predio.dart';
-import '../../auth/providers/demo_provider.dart';
-import '../../auth/providers/demo_data.dart';
-import 'demo_predios_notifier.dart';
+import 'local_predios_provider.dart';
+import '../../auth/providers/auth_provider.dart';
 
 // Filtros activos
 class PrediosFiltros {
@@ -47,37 +46,64 @@ final prediosFiltrosProvider = StateProvider<PrediosFiltros>(
 );
 
 final prediosListProvider = FutureProvider<List<Predio>>((ref) async {
-  final isDemo = ref.watch(demoModeProvider);
-  if (isDemo) {
-    final filtros = ref.watch(prediosFiltrosProvider);
-    var lista = List<Predio>.from(ref.watch(demoPrediosNotifierProvider));
+  ref.keepAlive();
+  final filtros = ref.watch(prediosFiltrosProvider);
+  final locales = ref.watch(localPrediosProvider);
+  // Filtro por proyecto de sesión (null = admin, ve todos)
+  final proyectoSesion = ref.watch(proyectoActivoProvider);
+  final repo = ref.read(prediosRepositoryProvider);
+  List<Predio> remotos = const [];
+  try {
+    remotos = await repo.getPredios(
+      busqueda: filtros.busqueda,
+      usoSuelo: filtros.usoSuelo,
+      zona: filtros.zona,
+      propietarioId: filtros.propietarioId,
+      limit: 1000,
+    );
+  } catch (_) {
+    remotos = const [];
+  }
+
+  var localesFiltrados = locales.where((p) {
     if (filtros.busqueda.isNotEmpty) {
       final q = filtros.busqueda.toLowerCase();
-      lista = lista.where((p) =>
-        p.claveCatastral.toLowerCase().contains(q) ||
-        (p.propietarioNombre?.toLowerCase().contains(q) ?? false) ||
-        (p.ejido?.toLowerCase().contains(q) ?? false)
-      ).toList();
+      final matchesBusqueda = p.claveCatastral.toLowerCase().contains(q) ||
+          (p.propietarioNombre?.toLowerCase().contains(q) ?? false) ||
+          (p.ejido?.toLowerCase().contains(q) ?? false);
+      if (!matchesBusqueda) return false;
     }
-    if (filtros.usoSuelo != null) {
-      lista = lista.where((p) => p.usoSuelo == filtros.usoSuelo).toList();
+    if (filtros.usoSuelo != null && p.usoSuelo != filtros.usoSuelo) {
+      return false;
     }
-    if (filtros.zona != null) {
-      lista = lista.where((p) => p.zona == filtros.zona).toList();
+    if (filtros.zona != null && p.zona != filtros.zona) {
+      return false;
     }
-    if (filtros.proyecto != null) {
-      lista = lista.where((p) => _extractProjectoFromPredio(p) == filtros.proyecto).toList();
+    if (filtros.propietarioId != null && p.propietarioId != filtros.propietarioId) {
+      return false;
     }
-    return lista;
+    return true;
+  }).toList();
+
+  // Aplicar filtro de proyecto desde filtros UI
+  final proyectoFiltro = filtros.proyecto ?? proyectoSesion;
+  if (proyectoFiltro != null) {
+    remotos = remotos
+        .where((p) => _extractProjectoFromPredio(p) == proyectoFiltro)
+        .toList();
+    localesFiltrados = localesFiltrados
+        .where((p) => _extractProjectoFromPredio(p) == proyectoFiltro)
+        .toList();
   }
-  final filtros = ref.watch(prediosFiltrosProvider);
-  final repo = ref.read(prediosRepositoryProvider);
-  return repo.getPredios(
-    busqueda: filtros.busqueda,
-    usoSuelo: filtros.usoSuelo,
-    zona: filtros.zona,
-    propietarioId: filtros.propietarioId,
-  );
+
+  final merged = <Predio>[...remotos];
+  final claves = remotos.map((p) => p.claveCatastral).toSet();
+  for (final local in localesFiltrados) {
+    if (!claves.contains(local.claveCatastral)) {
+      merged.add(local);
+    }
+  }
+  return merged;
 });
 
 /// Extrae el proyecto de un predio según sus campos
@@ -104,29 +130,79 @@ String _extractProjectoFromPredio(Predio predio) {
 }
 
 final prediosMapaProvider = FutureProvider<List<Predio>>((ref) async {
-  final isDemo = ref.watch(demoModeProvider);
-  if (isDemo) return ref.watch(demoPrediosNotifierProvider);
+  ref.keepAlive();
+  final locales = ref.watch(localPrediosProvider);
+  final proyectoSesion = ref.watch(proyectoActivoProvider);
   final repo = ref.read(prediosRepositoryProvider);
-  return repo.getPredios(limit: 200);
+  List<Predio> remotos = const [];
+  try {
+    remotos = await repo.getPredios(limit: 200);
+  } catch (_) {
+    remotos = const [];
+  }
+  var localesFiltrados = locales.toList();
+  if (proyectoSesion != null) {
+    remotos = remotos.where((p) => _extractProjectoFromPredio(p) == proyectoSesion).toList();
+    localesFiltrados = localesFiltrados.where((p) => _extractProjectoFromPredio(p) == proyectoSesion).toList();
+  }
+  final merged = <Predio>[...remotos];
+  final claves = remotos.map((p) => p.claveCatastral).toSet();
+  for (final local in localesFiltrados) {
+    if (!claves.contains(local.claveCatastral)) {
+      merged.add(local);
+    }
+  }
+  return merged;
+});
+
+final prediosMapaByIdProvider = Provider<Map<String, Predio>>((ref) {
+  final prediosAsync = ref.watch(prediosMapaProvider);
+  return prediosAsync.maybeWhen(
+    data: (predios) => {for (final predio in predios) predio.id: predio},
+    orElse: () => const {},
+  );
 });
 
 final predioDetalleProvider = FutureProvider.family<Predio?, String>((ref, id) async {
-  final isDemo = ref.watch(demoModeProvider);
-  if (isDemo) {
-    final lista = ref.watch(demoPrediosNotifierProvider);
-    try {
-      return lista.firstWhere((p) => p.id == id);
-    } catch (_) {
-      return null;
-    }
+  final locales = ref.watch(localPrediosProvider);
+  for (final local in locales) {
+    if (local.id == id) return local;
   }
   final repo = ref.read(prediosRepositoryProvider);
-  return repo.getPredioById(id);
+  try {
+    return await repo.getPredioById(id);
+  } catch (_) {
+    return null;
+  }
 });
 
 final estadisticasProvider = FutureProvider<Map<String, dynamic>>((ref) async {
-  final isDemo = ref.watch(demoModeProvider);
-  if (isDemo) return demoEstadisticas;
+  final locales = ref.watch(localPrediosProvider);
   final repo = ref.read(prediosRepositoryProvider);
-  return repo.getEstadisticas();
+  try {
+    final remotas = await repo.getEstadisticas();
+    final totalRemoto = (remotas['total'] as int?) ?? 0;
+    final total = totalRemoto + locales.length;
+    final superficieLocal = locales.fold<double>(
+      0,
+      (sum, p) => sum + (p.superficie ?? 0),
+    );
+    return {
+      ...remotas,
+      'total': total,
+      'superficie_total': ((remotas['superficie_total'] as num?)?.toDouble() ?? 0) + superficieLocal,
+    };
+  } catch (_) {
+    final porUso = <String, int>{};
+    var superficie = 0.0;
+    for (final p in locales) {
+      porUso[p.tipoPropiedad] = (porUso[p.tipoPropiedad] ?? 0) + 1;
+      superficie += p.superficie ?? 0;
+    }
+    return {
+      'total': locales.length,
+      'por_uso_suelo': porUso,
+      'superficie_total': superficie,
+    };
+  }
 });

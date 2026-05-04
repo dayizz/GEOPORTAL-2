@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../providers/propietarios_provider.dart';
 import '../data/propietarios_repository.dart';
+import '../../mapa/providers/mapa_provider.dart';
+import '../../predios/models/predio.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_strings.dart';
 
@@ -14,6 +16,7 @@ class PropietarioDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final propietarioAsync = ref.watch(propietarioDetalleProvider(id));
+    final prediosAsync = ref.watch(prediosPorPropietarioProvider(id));
 
     return Scaffold(
       appBar: AppBar(
@@ -115,12 +118,13 @@ class PropietarioDetailScreen extends ConsumerWidget {
                         if (p.telefono != null) _buildRow('Teléfono', p.telefono!),
                         if (p.correo != null) _buildRow('Correo', p.correo!),
                       ]),
+                      _buildPrediosVinculadosSection(context, ref, prediosAsync),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
                           icon: const Icon(Icons.list_alt),
-                          label: const Text('Ver predios asociados'),
+                          label: const Text('Abrir gestión de predios'),
                           onPressed: () => context.go('/predios'),
                         ),
                       ),
@@ -166,6 +170,102 @@ class PropietarioDetailScreen extends ConsumerWidget {
                   ],
                 );
               }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrediosVinculadosSection(
+    BuildContext context,
+    WidgetRef ref,
+    AsyncValue<List<Predio>> prediosAsync,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.home_work_outlined, size: 18, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Text('Predios vinculados', style: Theme.of(context).textTheme.titleMedium),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: prediosAsync.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (e, _) => Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Error cargando predios: $e'),
+              ),
+              data: (predios) {
+                if (predios.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text(
+                      'Este propietario aún no tiene predios vinculados.',
+                      style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                    ),
+                  );
+                }
+
+                return Column(
+                  children: List.generate(predios.length, (index) {
+                    final predio = predios[index];
+                    final tieneGeometria =
+                        predio.geometry != null ||
+                        (predio.latitud != null && predio.longitud != null);
+
+                    return Column(
+                      children: [
+                        ListTile(
+                          dense: true,
+                          title: Text(
+                            predio.claveCatastral,
+                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                          ),
+                          subtitle: Text(
+                            '${predio.tramo} · ${predio.tipoPropiedad}',
+                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          ),
+                          trailing: Tooltip(
+                            message: tieneGeometria
+                                ? 'Ver en mapa'
+                                : 'Predio sin geometría',
+                            child: IconButton(
+                              icon: Icon(
+                                Icons.map_outlined,
+                                color: tieneGeometria
+                                    ? AppColors.secondary
+                                    : AppColors.textLight,
+                              ),
+                              onPressed: tieneGeometria
+                                  ? () {
+                                      ref.read(focusPredioIdProvider.notifier).state = predio.id;
+                                      context.go('/mapa');
+                                    }
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        if (index < predios.length - 1) const Divider(height: 1),
+                      ],
+                    );
+                  }),
+                );
+              },
             ),
           ),
         ],

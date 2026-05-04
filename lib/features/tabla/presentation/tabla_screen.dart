@@ -4,13 +4,14 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../../core/constants/app_colors.dart';
-import '../../auth/providers/demo_provider.dart';
-import '../../auth/providers/demo_data.dart';
 import '../../mapa/providers/mapa_provider.dart';
 import '../../predios/data/predios_repository.dart';
 import '../../predios/models/predio.dart';
-import '../../predios/providers/demo_predios_notifier.dart';
+import '../../predios/providers/local_predios_provider.dart';
 import '../../predios/providers/predios_provider.dart';
+import '../../propietarios/providers/local_propietarios_provider.dart';
+import '../../propietarios/providers/propietarios_provider.dart';
+import '../../../shared/services/backend_service.dart';
 
 class TablaScreen extends ConsumerStatefulWidget {
   const TablaScreen({super.key});
@@ -19,20 +20,47 @@ class TablaScreen extends ConsumerStatefulWidget {
   ConsumerState<TablaScreen> createState() => _TablaScreenState();
 }
 
+
 class _TablaScreenState extends ConsumerState<TablaScreen> {
   static const _proyectos = ['TQI', 'TSNL', 'TAP', 'TQM'];
 
   final _searchCtrl = TextEditingController();
   final _verticalScroll = ScrollController();
+  final Map<String, Predio> _prediosOptimistas = {};
+  List<Predio> _ultimosPredios = const [];
 
   String _proyectoActual = 'TQI';
   String _busqueda = '';
   String? _filtroTramo;
   String? _filtroTipo;
   String? _filtroCop; // 'SI' | 'NO' | null
+  String? _filtroEstatus; // 'Liberado' | 'No liberado' | null
 
   final _nf = NumberFormat('#,##0.00');
   final _nf4 = NumberFormat('0.0000');
+  bool _normalizacionInicialAplicada = false;
+
+  // Paginación
+  static const int _rowsPerPage = 50;
+  int _currentPage = 0;
+
+  int get _startRow => _currentPage * _rowsPerPage;
+  int get _endRow => _startRow + _rowsPerPage;
+  void _goToPage(int page, int totalRows) {
+    final maxPage = (totalRows / _rowsPerPage).ceil() - 1;
+    setState(() {
+      _currentPage = page.clamp(0, maxPage);
+    });
+    _verticalScroll.jumpTo(0);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _normalizarDatosLocalesExistentes();
+    });
+  }
 
   @override
   void dispose() {
@@ -41,11 +69,65 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     super.dispose();
   }
 
+  void _normalizarDatosLocalesExistentes() {
+    if (_normalizacionInicialAplicada || !mounted) return;
+    _normalizacionInicialAplicada = true;
+
+    final prediosActualizados =
+        ref.read(localPrediosProvider.notifier).normalizeExistingData();
+    final prediosDeduplicados =
+        ref.read(localPrediosProvider.notifier).deduplicateExistingData();
+    final propietariosActualizados =
+        ref.read(localPropietariosProvider.notifier).normalizeExistingData();
+
+    final totalActualizados =
+        prediosActualizados + propietariosActualizados + prediosDeduplicados;
+    if (totalActualizados > 0) {
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+      ref.invalidate(propietariosListProvider);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Normalizacion aplicada: $prediosActualizados predio(s) y '
+            '$propietariosActualizados propietario(s). '
+            '${prediosDeduplicados > 0 ? "Duplicados eliminados: $prediosDeduplicados." : ""}',
+          ),
+        ),
+      );
+    }
+  }
+
+  // Memoización de filtros
+  List<Predio>? _lastAll;
+  String? _lastProyecto;
+  String? _lastTramo;
+  String? _lastTipo;
+  String? _lastCop;
+  String? _lastEstatus;
+  String? _lastBusqueda;
+  List<Predio>? _lastFiltered;
+
   List<Predio> _applyFilters(List<Predio> all) {
-    return all.where((p) {
+    final shouldRecompute = _lastAll != all ||
+        _lastProyecto != _proyectoActual ||
+        _lastTramo != _filtroTramo ||
+        _lastTipo != _filtroTipo ||
+        _lastCop != _filtroCop ||
+        _lastEstatus != _filtroEstatus ||
+        _lastBusqueda != _busqueda;
+    if (!shouldRecompute && _lastFiltered != null) {
+      return _lastFiltered!;
+    }
+    final filtered = all.where((p) {
       if (_predioProyecto(p) != _proyectoActual) return false;
       if (_filtroTramo != null && p.tramo != _filtroTramo) return false;
       if (_filtroTipo != null && p.tipoPropiedad != _filtroTipo) return false;
+      if (_filtroEstatus != null) {
+        final estatus = p.cop ? 'Liberado' : 'No liberado';
+        if (estatus != _filtroEstatus) return false;
+      }
       if (_filtroCop != null) {
         final want = _filtroCop == 'SI';
         if (p.cop != want) return false;
@@ -58,6 +140,15 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
       }
       return true;
     }).toList();
+    _lastAll = all;
+    _lastProyecto = _proyectoActual;
+    _lastTramo = _filtroTramo;
+    _lastTipo = _filtroTipo;
+    _lastCop = _filtroCop;
+    _lastEstatus = _filtroEstatus;
+    _lastBusqueda = _busqueda;
+    _lastFiltered = filtered;
+    return filtered;
   }
 
   String _predioProyecto(Predio predio) {
@@ -87,61 +178,118 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDemo = ref.watch(demoModeProvider);
-    final demoPrediosList = ref.watch(demoPrediosNotifierProvider);
-    final supabasePredios = isDemo
-        ? demoPrediosList
-        : ref.watch(prediosListProvider).maybeWhen(
-              data: (d) => d,
-              orElse: () => <Predio>[],
-            );
-    // Siempre usa datos demo si Supabase no devuelve nada
-    final allPredios = supabasePredios.isNotEmpty ? supabasePredios : demoPrediosList;
-    final filtered = _applyFilters(allPredios);
-    final activeFilters =
-        (_filtroTramo != null ? 1 : 0) + (_filtroTipo != null ? 1 : 0) + (_filtroCop != null ? 1 : 0);
-
-    return AppScaffold(
-      currentIndex: 4,
-      title: 'Gestion  •  $_proyectoActual  •  ${filtered.length} predios',
-      actions: [
-        if (activeFilters > 0)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Badge(
-              label: Text('$activeFilters'),
-              child: IconButton(
-                icon: const Icon(Icons.filter_list),
-                tooltip: 'Limpiar filtros',
-                onPressed: () => setState(() {
-                  _filtroTramo = null;
-                  _filtroTipo = null;
-                  _filtroCop = null;
-                }),
+    final prediosAsync = ref.watch(prediosListProvider);
+    Widget content;
+    if (prediosAsync.isLoading) {
+      content = const Center(child: CircularProgressIndicator());
+    } else if (prediosAsync.hasError) {
+      content = Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: AppColors.danger),
+            const SizedBox(height: 12),
+            Text('Error al cargar los datos', style: TextStyle(color: AppColors.danger)),
+            const SizedBox(height: 8),
+            Text(prediosAsync.error.toString(), textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => ref.refresh(prediosListProvider),
+              child: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      // Si no hay datos, mostrar mensaje amigable y evitar errores
+      final remoteData = prediosAsync.asData?.value;
+      final prediosList = remoteData ?? _ultimosPredios;
+      if (prediosList == null || prediosList.isEmpty) {
+        content = Column(
+          children: [
+            _buildTopBar(0, const []),
+            const Divider(height: 1),
+            const Expanded(
+              child: Center(
+                child: Text(
+                  'No hay predios registrados aún. Importa un archivo o agrega datos para comenzar.',
+                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
-          )
-        else
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            tooltip: 'Filtros',
-            onPressed: () => _showFiltros(context),
-          ),
-        IconButton(
-          icon: const Icon(Icons.tune_outlined),
-          tooltip: 'Filtros avanzados',
-          onPressed: () => _showFiltros(context),
-        ),
-      ],
-      child: Column(
-        children: [
-          _buildTopBar(filtered.length, allPredios),
-          const Divider(height: 1),
-          Expanded(
-            child: _buildTable(filtered),
-          ),
-        ],
-      ),
+          ],
+        );
+      } else {
+        _ultimosPredios = prediosList;
+        final allPredios = prediosList
+            .map((predio) => _prediosOptimistas[predio.id] ?? predio)
+            .toList(growable: false);
+        final filtered = _applyFilters(allPredios);
+        final totalPages = (filtered.length / _rowsPerPage).ceil();
+        final pageRows = filtered.skip(_startRow).take(_rowsPerPage).toList();
+
+        // Auto-seleccionar el proyecto solicitado por la pantalla de carga (post-importación)
+        final proyectoSolicitado = ref.watch(gestionProyectoProvider);
+        if (proyectoSolicitado != null && _proyectos.contains(proyectoSolicitado) &&
+            proyectoSolicitado != _proyectoActual) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() => _proyectoActual = proyectoSolicitado);
+            ref.read(gestionProyectoProvider.notifier).state = null;
+          });
+        }
+
+        content = Column(
+          children: [
+            _buildTopBar(filtered.length, allPredios),
+            const Divider(height: 1),
+            if (totalPages > 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.first_page),
+                      onPressed: _currentPage > 0
+                          ? () => _goToPage(0, filtered.length)
+                          : null,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      onPressed: _currentPage > 0
+                          ? () => _goToPage(_currentPage - 1, filtered.length)
+                          : null,
+                    ),
+                    Text('Página \\${_currentPage + 1} de $totalPages'),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      onPressed: _currentPage < totalPages - 1
+                          ? () => _goToPage(_currentPage + 1, filtered.length)
+                          : null,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.last_page),
+                      onPressed: _currentPage < totalPages - 1
+                          ? () => _goToPage(totalPages - 1, filtered.length)
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            Expanded(
+              child: _buildTable(pageRows),
+            ),
+          ],
+        );
+      }
+    }
+
+    return AppScaffold(
+      currentIndex: 3,
+      title: 'Gestion',
+      child: content,
     );
   }
 
@@ -149,26 +297,80 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _proyectos
-                    .map(
-                      (proyecto) => Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: ChoiceChip(
-                          label: Text('$proyecto (${_conteoProyecto(allPredios, proyecto)})'),
-                          selected: _proyectoActual == proyecto,
-                          onSelected: (_) => setState(() => _proyectoActual = proyecto),
-                        ),
-                      ),
-                    )
-                    .toList(),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              const Icon(Icons.folder_outlined, size: 16, color: AppColors.textSecondary),
+              const Text(
+                'Proyecto:',
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               ),
-            ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _proyectoActual,
+                      isDense: true,
+                      icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                      ),
+                      dropdownColor: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      items: _proyectos.map((proyecto) {
+                        final count = _conteoProyecto(allPredios, proyecto);
+                        return DropdownMenuItem<String>(
+                          value: proyecto,
+                          child: Row(
+                            children: [
+                              Text(
+                                proyecto,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  '$count',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => _proyectoActual = v);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Row(
@@ -202,7 +404,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
               TextButton.icon(
                 icon: const Icon(Icons.filter_alt_outlined, size: 18),
                 label: Text(
-                  'Filtros${_filtroTramo != null || _filtroTipo != null || _filtroCop != null ? ' ✓' : ''}',
+                  'Filtros${_filtroTramo != null || _filtroTipo != null || _filtroCop != null || _filtroEstatus != null ? ' ✓' : ''}',
                 ),
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -219,7 +421,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
               style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
             ),
           ),
-          if (_filtroTramo != null || _filtroTipo != null || _filtroCop != null) ...[
+          if (_filtroTramo != null || _filtroTipo != null || _filtroCop != null || _filtroEstatus != null) ...[
             const SizedBox(height: 6),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -255,6 +457,20 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
                         label: Text('COP: $_filtroCop'),
                         onDeleted: () => setState(() => _filtroCop = null),
                         backgroundColor: _filtroCop == 'SI'
+                            ? AppColors.secondary.withValues(alpha: 0.15)
+                            : AppColors.danger.withValues(alpha: 0.15),
+                        deleteIcon: const Icon(Icons.close, size: 14),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  if (_filtroEstatus != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Chip(
+                        label: Text('Estatus: $_filtroEstatus'),
+                        onDeleted: () => setState(() => _filtroEstatus = null),
+                        backgroundColor: _filtroEstatus == 'Liberado'
                             ? AppColors.secondary.withValues(alpha: 0.15)
                             : AppColors.danger.withValues(alpha: 0.15),
                         deleteIcon: const Icon(Icons.close, size: 14),
@@ -299,6 +515,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
        72, // KM EF
        80, // M²
        46, // COP
+      90, // ESTATUS
       130, // COP FIRMADO
       130, // OFICIO
        54, // POL. INS
@@ -310,7 +527,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     const headers = <String>[
       '', 'MAPA', 'PROPIETARIO', 'ID SEDATU', 'TRAMO', 'TIPO', 'EJIDO',
       'KM INICIO', 'KM FIN', 'KM LIN', 'KM EF', 'M²',
-      'C.O.P', 'COP FIRMADO', 'OFICIO',
+      'C.O.P', 'ESTATUS', 'COP FIRMADO', 'OFICIO',
       'POL.\nINS.', 'IDENT.', 'LEVANT.', 'NEGOC.',
     ];
 
@@ -379,18 +596,38 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     );
   }
 
-  void _savePredio(Predio updated) {
-    final isDemo = ref.read(demoModeProvider);
-    final supabasePredios = ref.read(prediosListProvider).maybeWhen(
-      data: (d) => d,
-      orElse: () => <Predio>[],
-    );
-    final usingDemo = isDemo || supabasePredios.isEmpty;
-    if (usingDemo) {
-      ref.read(demoPrediosNotifierProvider.notifier).updatePredio(updated);
-    } else {
-      ref.read(prediosRepositoryProvider).updatePredio(updated.id, updated.toMap());
+  Future<void> _savePredio(Predio previous, Predio updated) async {
+    setState(() {
+      _prediosOptimistas[updated.id] = updated;
+    });
+
+    if (updated.id.startsWith('local-')) {
+      ref.read(localPrediosProvider.notifier).updatePredio(updated);
       ref.invalidate(prediosListProvider);
+      return;
+    }
+
+    try {
+      final saved = await ref
+          .read(prediosRepositoryProvider)
+          .updatePredio(updated.id, updated.toMap());
+      if (!mounted) return;
+      setState(() {
+        _prediosOptimistas[updated.id] = saved;
+      });
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _prediosOptimistas[previous.id] = previous;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo actualizar el predio en la base de datos.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
     }
   }
 
@@ -437,40 +674,95 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
             p.cop, widths[12],
             trueColor: AppColors.secondary,
             falseColor: Colors.grey.shade400,
-            onTap: () => _savePredio(p.copyWith(cop: !p.cop, updatedAt: DateTime.now())),
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(cop: !p.cop, updatedAt: DateTime.now()),
+            ),
           ),
+          // ESTATUS
+          _estatusCell(p, widths[13]),
           // COP FIRMADO
-          _dataCell(p.copFirmado ?? '-', widths[13]),
+          _dataCell(p.copFirmado ?? '-', widths[14]),
           // OFICIO
-          _dataCell(p.oficio ?? '-', widths[14]),
+          _dataCell(p.oficio ?? '-', widths[15]),
           // POLÍGONO INSERTADO (tappable)
           _tappableBoolCell(
-            p.poligonoInsertado, widths[15],
-            onTap: () => _savePredio(p.copyWith(poligonoInsertado: !p.poligonoInsertado, updatedAt: DateTime.now())),
+            p.poligonoInsertado, widths[16],
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(
+                poligonoInsertado: !p.poligonoInsertado,
+                updatedAt: DateTime.now(),
+              ),
+            ),
           ),
           // IDENTIFICACION (tappable)
           _tappableBoolCell(
-            p.identificacion, widths[16],
-            onTap: () => _savePredio(p.copyWith(identificacion: !p.identificacion, updatedAt: DateTime.now())),
+            p.identificacion, widths[17],
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(
+                identificacion: !p.identificacion,
+                updatedAt: DateTime.now(),
+              ),
+            ),
           ),
           // LEVANTAMIENTO (tappable)
           _tappableBoolCell(
-            p.levantamiento, widths[17],
-            onTap: () => _savePredio(p.copyWith(levantamiento: !p.levantamiento, updatedAt: DateTime.now())),
+            p.levantamiento, widths[18],
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(
+                levantamiento: !p.levantamiento,
+                updatedAt: DateTime.now(),
+              ),
+            ),
           ),
           // NEGOCIACION (tappable)
           _tappableBoolCell(
-            p.negociacion, widths[18],
-            onTap: () => _savePredio(p.copyWith(negociacion: !p.negociacion, updatedAt: DateTime.now())),
+            p.negociacion, widths[19],
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(
+                negociacion: !p.negociacion,
+                updatedAt: DateTime.now(),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
+  Widget _estatusCell(Predio predio, double width) {
+    final estatus = predio.cop ? 'Liberado' : 'No liberado';
+    final color = predio.cop ? AppColors.secondary : AppColors.danger;
+
+    return Container(
+      width: width,
+      height: double.infinity,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          estatus,
+          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+
   Widget _actionCell(Predio p, double width) {
     return InkWell(
-      onTap: () => _showEditSheet(context, p),
+      onTap: () => context.push('/tabla/predio/${p.id}'),
       child: Container(
         width: width,
         height: double.infinity,
@@ -485,17 +777,21 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
 
   /// Botón "Ver en Mapa": navega al mapa y hace fly-to al predio.
   Widget _mapCell(Predio p, double width) {
-    final tieneGeometria = p.geometry != null ||
-        (p.latitud != null && p.longitud != null);
+    final vinculado = p.poligonoInsertado || p.geometry != null;
     return Tooltip(
-      message: tieneGeometria ? 'Ver en mapa' : 'Sin geometría registrada',
+      message: vinculado
+          ? 'Vinculado: ver en mapa'
+          : 'No vinculado: vincular manualmente',
       child: InkWell(
-        onTap: tieneGeometria
-            ? () {
-                ref.read(focusPredioIdProvider.notifier).state = p.id;
-                context.go('/mapa');
-              }
-            : null,
+        onTap: () {
+          if (!vinculado) {
+            ref.read(manualVincularPredioIdProvider.notifier).state = p.id;
+            context.go('/mapa');
+            return;
+          }
+          ref.read(focusPredioIdProvider.notifier).state = p.id;
+          context.go('/mapa');
+        },
         child: Container(
           width: width,
           height: double.infinity,
@@ -504,9 +800,9 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
             border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
           ),
           child: Icon(
-            Icons.map_outlined,
+            vinculado ? Icons.link_rounded : Icons.link_off_rounded,
             size: 16,
-            color: tieneGeometria ? AppColors.secondary : Colors.grey.shade300,
+            color: vinculado ? AppColors.secondary : AppColors.danger,
           ),
         ),
       ),
@@ -628,218 +924,11 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     );
   }
 
-  void _showEditSheet(BuildContext context, Predio p) {
-    final propCtrl = TextEditingController(text: p.propietarioNombre ?? '');
-    final ejidoCtrl = TextEditingController(text: p.ejido ?? '');
-    final m2Ctrl = TextEditingController(text: p.superficie?.toString() ?? '');
-    final copFirmadoCtrl = TextEditingController(text: p.copFirmado ?? '');
-    final dwgCtrl = TextEditingController(text: p.poligonoDwg ?? '');
-    final oficioCtrl = TextEditingController(text: p.oficio ?? '');
-    final kmIniCtrl = TextEditingController(text: p.kmInicio?.toString() ?? '');
-    final kmFinCtrl = TextEditingController(text: p.kmFin?.toString() ?? '');
-
-    bool cop = p.cop;
-    bool ident = p.identificacion;
-    bool levant = p.levantamiento;
-    bool negoc = p.negociacion;
-    bool poli = p.poligonoInsertado;
-    String tramo = p.tramo;
-    String tipo = p.tipoPropiedad;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) {
-          void save() {
-            final updated = p.copyWith(
-              propietarioNombre: propCtrl.text.trim().isEmpty ? null : propCtrl.text.trim(),
-              ejido: ejidoCtrl.text.trim().isEmpty ? null : ejidoCtrl.text.trim(),
-              tramo: tramo,
-              tipoPropiedad: tipo,
-              kmInicio: double.tryParse(kmIniCtrl.text),
-              kmFin: double.tryParse(kmFinCtrl.text),
-              superficie: double.tryParse(m2Ctrl.text),
-              cop: cop,
-              copFirmado: copFirmadoCtrl.text.trim().isEmpty ? null : copFirmadoCtrl.text.trim(),
-              poligonoDwg: dwgCtrl.text.trim().isEmpty ? null : dwgCtrl.text.trim(),
-              oficio: oficioCtrl.text.trim().isEmpty ? null : oficioCtrl.text.trim(),
-              identificacion: ident,
-              levantamiento: levant,
-              negociacion: negoc,
-              poligonoInsertado: poli,
-              updatedAt: DateTime.now(),
-            );
-            _savePredio(updated);
-            Navigator.pop(ctx);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('${p.claveCatastral} actualizado'),
-                backgroundColor: AppColors.secondary,
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          }
-
-          InputDecoration _dec(String label) => InputDecoration(
-                labelText: label,
-                isDense: true,
-                border: const OutlineInputBorder(),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              );
-
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-                16, 16, 16, MediaQuery.of(ctx).viewInsets.bottom + 16),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: AppColors.tipoPropiedadColor(tipo),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          p.claveCatastral,
-                          style: Theme.of(ctx).textTheme.titleMedium,
-                        ),
-                      ),
-                      TextButton(onPressed: save, child: const Text('Guardar')),
-                      IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(ctx)),
-                    ],
-                  ),
-                  const Divider(),
-                  // Tramo + Tipo
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: tramo,
-                          decoration: _dec('Tramo'),
-                          items: ['T1', 'T2', 'T3', 'T4']
-                              .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                              .toList(),
-                          onChanged: (v) => setS(() => tramo = v!),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          value: tipo,
-                          decoration: _dec('Tipo'),
-                          items: ['SOCIAL', 'DOMINIO PLENO', 'PRIVADA']
-                              .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                              .toList(),
-                          onChanged: (v) => setS(() => tipo = v!),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // Propietario + Ejido
-                  Row(
-                    children: [
-                      Expanded(child: TextField(controller: propCtrl, decoration: _dec('Propietario'))),
-                      const SizedBox(width: 10),
-                      Expanded(child: TextField(controller: ejidoCtrl, decoration: _dec('Ejido'))),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // KM inicio + fin + M²
-                  Row(
-                    children: [
-                      Expanded(child: TextField(controller: kmIniCtrl, decoration: _dec('KM Inicio'), keyboardType: TextInputType.number)),
-                      const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: kmFinCtrl, decoration: _dec('KM Fin'), keyboardType: TextInputType.number)),
-                      const SizedBox(width: 8),
-                      Expanded(child: TextField(controller: m2Ctrl, decoration: _dec('M²'), keyboardType: TextInputType.number)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // Documentos
-                  TextField(controller: copFirmadoCtrl, decoration: _dec('COP Firmado (archivo)')),
-                  const SizedBox(height: 8),
-                  TextField(controller: dwgCtrl, decoration: _dec('Polígono DWG (archivo)')),
-                  const SizedBox(height: 8),
-                  TextField(controller: oficioCtrl, decoration: _dec('Oficio')),
-                  const SizedBox(height: 12),
-                  // Etapas
-                  Text('Etapas de Avance', style: Theme.of(ctx).textTheme.labelLarge),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      _etapaChip('Identificación', ident, AppColors.primary,
-                          (v) => setS(() => ident = v)),
-                      _etapaChip('Levantamiento', levant, AppColors.info,
-                          (v) => setS(() => levant = v)),
-                      _etapaChip('Negociación', negoc, AppColors.warning,
-                          (v) => setS(() => negoc = v)),
-                      _etapaChip('C.O.P.', cop, AppColors.secondary,
-                          (v) => setS(() => cop = v)),
-                      _etapaChip('Pol. Insertado', poli, const Color(0xFF8E44AD),
-                          (v) => setS(() => poli = v)),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Guardar cambios'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: save,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    ).whenComplete(() {
-      propCtrl.dispose(); ejidoCtrl.dispose(); m2Ctrl.dispose();
-      copFirmadoCtrl.dispose(); dwgCtrl.dispose(); oficioCtrl.dispose();
-      kmIniCtrl.dispose(); kmFinCtrl.dispose();
-    });
-  }
-
-  Widget _etapaChip(String label, bool value, Color color, ValueChanged<bool> onChanged) {
-    return FilterChip(
-      label: Text(label, style: TextStyle(fontSize: 12, color: value ? color : AppColors.textSecondary)),
-      selected: value,
-      onSelected: onChanged,
-      selectedColor: color.withValues(alpha: 0.18),
-      checkmarkColor: color,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      visualDensity: VisualDensity.compact,
-    );
-  }
-
   void _showFiltros(BuildContext context) {
     String? tramo = _filtroTramo;
     String? tipo = _filtroTipo;
     String? cop = _filtroCop;
+    String? estatus = _filtroEstatus;
 
     showModalBottomSheet(
       context: context,
@@ -862,7 +951,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
                   const Spacer(),
                   TextButton(
                     onPressed: () {
-                      setS(() { tramo = null; tipo = null; cop = null; });
+                      setS(() { tramo = null; tipo = null; cop = null; estatus = null; });
                     },
                     child: const Text('Limpiar todo'),
                   ),
@@ -916,6 +1005,26 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 16),
+              Text('Estatus', style: Theme.of(ctx).textTheme.labelLarge),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  FilterChip(
+                    label: const Text('Liberado'),
+                    selected: estatus == 'Liberado',
+                    onSelected: (v) => setS(() => estatus = v ? 'Liberado' : null),
+                    selectedColor: AppColors.secondary.withValues(alpha: 0.2),
+                  ),
+                  FilterChip(
+                    label: const Text('No liberado'),
+                    selected: estatus == 'No liberado',
+                    onSelected: (v) => setS(() => estatus = v ? 'No liberado' : null),
+                    selectedColor: AppColors.danger.withValues(alpha: 0.2),
+                  ),
+                ],
+              ),
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -931,6 +1040,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
                       _filtroTramo = tramo;
                       _filtroTipo = tipo;
                       _filtroCop = cop;
+                      _filtroEstatus = estatus;
                     });
                     Navigator.pop(ctx);
                   },

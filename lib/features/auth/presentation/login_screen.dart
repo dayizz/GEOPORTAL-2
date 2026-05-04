@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
-import '../providers/demo_provider.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_strings.dart';
 
@@ -33,6 +32,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _loading = true);
 
     try {
+      final email = _emailCtrl.text.trim().toLowerCase();
+      final password = _passCtrl.text;
+
+      if (localOnlyAuthMode) {
+        if (_isRegister) {
+          throw Exception('Registro deshabilitado en modo local.');
+        }
+        // Admin general (acceso total)
+        if (email == localAdminEmail && password == localAdminPassword) {
+          ref.read(localAuthSessionProvider.notifier).state = true;
+          ref.read(proyectoActivoProvider.notifier).state = null;
+          if (mounted) context.go('/');
+          return;
+        }
+        if (email == localAdminEmail) {
+          final proyecto = extractProyectoFromPassword(password);
+          if (proyecto != null) {
+            ref.read(localAuthSessionProvider.notifier).state = true;
+            ref.read(proyectoActivoProvider.notifier).state = proyecto;
+            if (mounted) context.go('/mapa');
+            return;
+          }
+        }
+        throw Exception('Credenciales inválidas.');
+      }
+
       final auth = ref.read(authRepositoryProvider);
       if (_isRegister) {
         await auth.signUpWithEmail(_emailCtrl.text.trim(), _passCtrl.text);
@@ -46,6 +71,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
       } else {
         await auth.signInWithEmail(_emailCtrl.text.trim(), _passCtrl.text);
+        final proyecto = extractProyectoFromPassword(_passCtrl.text);
+        ref.read(proyectoActivoProvider.notifier).state = proyecto;
         if (mounted) context.go('/');
       }
     } catch (e) {
@@ -193,26 +220,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     ? '¿Ya tienes cuenta? Inicia sesión'
                                     : '¿No tienes cuenta? Regístrate',
                               ),
-                            ),
-                            const Divider(height: 32),
-                            OutlinedButton.icon(
-                              onPressed: _loading ? null : () {
-                                ref.read(demoModeProvider.notifier).state = true;
-                                context.go('/mapa');
-                              },
-                              icon: const Icon(Icons.science_outlined),
-                              label: const Text('Entrar en modo demo'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.primary,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Demo: demo@geoportal.mx / demo1234',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.grey,
-                              ),
-                              textAlign: TextAlign.center,
                             ),
                           ],
                         ),

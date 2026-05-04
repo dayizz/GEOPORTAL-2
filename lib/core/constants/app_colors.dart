@@ -54,9 +54,10 @@ class AppColors {
   }
 
   // Colores para tipos de propiedad LDDV
-  static const Color tipoSinTipo = Color(0xFF757575);      // gris
-  static const Color tipoSocial = Color(0xFF8E44AD);       // purpura
-  static const Color tipoPrivada = Color(0xFFF39C12);      // naranja
+
+  static const Color tipoSinTipo = Color(0xFF6D6D6D);      // gris
+  static const Color tipoSocial = Color(0xFF7E57C2);       // purpura
+  static const Color tipoPrivada = Color(0xFFF57C00);      // naranja
 
   static Color tipoPropiedadColor(String tipo) {
     switch (tipo.toUpperCase()) {

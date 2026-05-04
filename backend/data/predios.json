@@ -1,0 +1,232 @@
+[
+  {
+    "clave_catastral": "PRUEBA_AEROPUERTO_1-0002",
+    "tramo": "T1",
+    "tipo_propiedad": "PRIVADA",
+    "uso_suelo": "Otro",
+    "valor_catastral": 0,
+    "propietario_nombre": "21",
+    "superficie": 0,
+    "km_inicio": 0,
+    "km_fin": 0,
+    "km_lineales": 0,
+    "km_efectivos": 0,
+    "geometry": {
+      "type": "MultiPolygon",
+      "coordinates": [
+        [
+          [
+            [
+              494012.7521334698,
+              2146549.004631752,
+              0
+            ],
+            [
+              492390.15429958777,
+              2146767.1482338263,
+              0
+            ],
+            [
+              492748.9874283365,
+              2147292.340984816,
+              0
+            ],
+            [
+              494111.07326726476,
+              2147366.299102023,
+              0
+            ],
+            [
+              494012.7521334698,
+              2146549.004631752,
+              0
+            ]
+          ]
+        ]
+      ]
+    },
+    "poligono_insertado": true,
+    "cop": false,
+    "identificacion": false,
+    "levantamiento": false,
+    "negociacion": false,
+    "id": "841f535b-afb6-4e90-89d9-8772faa8029f",
+    "created_at": "2026-05-01T01:06:37.860841+00:00",
+    "updated_at": "2026-05-01T01:06:37.860841+00:00"
+  },
+  {
+    "clave_catastral": "PRUEBA_AEROPUERTO_1-0001",
+    "tramo": "T1",
+    "tipo_propiedad": "PRIVADA",
+    "uso_suelo": "Otro",
+    "valor_catastral": 0,
+    "propietario_nombre": "29",
+    "superficie": 0,
+    "km_inicio": 0,
+    "km_fin": 0,
+    "km_lineales": 0,
+    "km_efectivos": 0,
+    "geometry": {
+      "type": "MultiPolygon",
+      "coordinates": [
+        [
+          [
+            [
+              491407.7088765402,
+              2147386.7917857105,
+              0
+            ],
+            [
+              490402.3635297478,
+              2148093.8126708837,
+              0
+            ],
+            [
+              490800.1015160539,
+              2148797.8007600135,
+              0
+            ],
+            [
+              493202.83042272675,
+              2149971.5230106153,
+              0
+            ],
+            [
+              494675.04327469313,
+              2150512.8190393015,
+              0
+            ],
+            [
+              495056.82577763294,
+              2149822.007619625,
+              0
+            ],
+            [
+              493702.64104845794,
+              2149021.3336642934,
+              0
+            ],
+            [
+              493270.1617332587,
+              2148236.6763761383,
+              0
+            ],
+            [
+              492805.8984058224,
+              2148601.3000142486,
+              0
+            ],
+            [
+              492275.69886265026,
+              2148197.430859671,
+              0
+            ],
+            [
+              492184.29401635466,
+              2147568.3062368934,
+              0
+            ],
+            [
+              491755.307926112,
+              2147028.568814888,
+              0
+            ],
+            [
+              491519.7133780338,
+              2147190.3214547415,
+              0
+            ],
+            [
+              491407.7088765402,
+              2147386.7917857105,
+              0
+            ]
+          ]
+        ]
+      ]
+    },
+    "poligono_insertado": true,
+    "cop": true,
+    "identificacion": false,
+    "levantamiento": false,
+    "negociacion": false,
+    "id": "f2c144fe-ad94-4d39-9e71-c44b28bf4fb4",
+    "created_at": "2026-05-04T16:51:12.749150+00:00",
+    "updated_at": "2026-05-04T16:52:42.586147+00:00"
+  },
+  {
+    "clave_catastral": "PRUEBA_AEROPUERTO_1-0003",
+    "tramo": "T1",
+    "tipo_propiedad": "PRIVADA",
+    "uso_suelo": "Otro",
+    "valor_catastral": 0,
+    "propietario_nombre": "Dayana Vela",
+    "superficie": 0,
+    "km_inicio": 0,
+    "km_fin": 0,
+    "km_lineales": 0,
+    "km_efectivos": 0,
+    "geometry": {
+      "type": "MultiPolygon",
+      "coordinates": [
+        [
+          [
+            [
+              494537.4970539154,
+              2148459.4344540746,
+              0
+            ],
+            [
+              494977.0702300368,
+              2149459.2479527034,
+              0
+            ],
+            [
+              495201.16635903984,
+              2149614.3914266285,
+              0
+            ],
+            [
+              495416.6434061582,
+              2149338.5808063173,
+              0
+            ],
+            [
+              496399.21874101774,
+              2149045.5320222364,
+              0
+            ],
+            [
+              496063.07454751316,
+              2148054.3376054917,
+              0
+            ],
+            [
+              496063.07454751316,
+              2148054.3376054917,
+              0
+            ],
+            [
+              496063.07454751316,
+              2148054.3376054917,
+              0
+            ],
+            [
+              494537.4970539154,
+              2148459.4344540746,
+              0
+            ]
+          ]
+        ]
+      ]
+    },
+    "poligono_insertado": true,
+    "cop": true,
+    "identificacion": false,
+    "levantamiento": false,
+    "negociacion": false,
+    "id": "9eced6dd-a21d-49d9-a1e9-724e25aa2344",
+    "created_at": "2026-05-04T16:51:12.787473+00:00",
+    "updated_at": "2026-05-04T16:52:41.472850+00:00"
+  }
+]

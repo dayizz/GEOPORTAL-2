@@ -7,4 +7,14 @@ class SupabaseConfig {
 
   static const String url = 'https://TU_PROJECT_ID.supabase.co';
   static const String anonKey = 'TU_ANON_KEY_AQUI';
+
+  static bool get isConfigured {
+    final normalizedUrl = url.trim().toLowerCase();
+    final normalizedAnonKey = anonKey.trim().toLowerCase();
+
+    return normalizedUrl.isNotEmpty &&
+        normalizedAnonKey.isNotEmpty &&
+        !normalizedUrl.contains('tu_project_id') &&
+        !normalizedAnonKey.contains('tu_anon_key');
+  }
 }

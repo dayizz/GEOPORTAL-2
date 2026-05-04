@@ -16,6 +16,7 @@ import '../../predios/models/proyecto.dart';
 import '../../predios/data/predios_repository.dart';
 import '../../predios/providers/demo_predios_notifier.dart';
 import '../../predios/providers/predios_provider.dart';
+import '../../predios/providers/local_predios_provider.dart';
 import '../../predios/providers/proyectos_provider.dart';
 import '../../propietarios/data/propietarios_repository.dart';
 import '../../propietarios/providers/propietarios_provider.dart';
@@ -31,10 +32,12 @@ class MapaScreen extends ConsumerStatefulWidget {
 class _MapaScreenState extends ConsumerState<MapaScreen> {
   final MapController _mapCtrl = MapController();
   Predio? _selectedPredio;
-  bool _showCapturaModal = true;
+  bool _showCapturaModal = false;
   bool _showLayersPanel = false;
+  bool _showVisualizacionPanel = false;
   bool _isDrawing = false;
-  bool _draftClosed = false;
+  bool _isManualLinkMode = false;
+  bool _isLinkingManual = false;
   final List<LatLng> _draftPoints = [];
   final List<_SavedPolygon> _capturedPolygons = [];
   final TextEditingController _tramoCtrl = TextEditingController();
@@ -50,10 +53,22 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
   bool _detectingUbicacion = false;
   /// Índice del feature importado actualmente seleccionado para captura.
   int? _importedFeatureIndex;
+  int? _manualFeatureIndex;
+  String? _manualSelectedPredioId;
+  final TextEditingController _manualPredioSearchCtrl = TextEditingController();
   int? _lastImportedFeaturesIdentity;
 
   static const _defaultCenter = LatLng(20.72, -100.35);
   static const _defaultZoom = 10.0;
+
+  // Memoización de polígonos importados (deben ser de instancia, no static locales)
+  List<Map<String, dynamic>>? _lastImportedFeatures;
+  MapaColorMode? _lastColorMode;
+  List<Polygon>? _lastImportedPolygons;
+  // Memoización de visuales
+  List<Predio>? _lastPredios;
+  MapaColorMode? _lastColorModeVisual;
+  List<_PredioVisualData>? _lastVisuals;
 
   @override
   void dispose() {
@@ -63,37 +78,96 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     _municipioCtrl.dispose();
     _kmInicioCtrl.dispose();
     _kmFinCtrl.dispose();
+    _manualPredioSearchCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final prediosAsync = ref.watch(prediosMapaProvider);
+    final prediosById = ref.watch(prediosMapaByIdProvider);
     final baseLayer = ref.watch(mapaBaseLayerProvider);
     final colorMode = ref.watch(mapaColorModeProvider);
     final importedFeatures = ref.watch(importedFeaturesProvider);
-    final importedPolygons = _buildImportedPolygons(importedFeatures);
-    final importedMarkers = _buildImportedMarkers(importedPolygons);
+
+    List<Polygon> importedPolygons;
+    if (_lastImportedFeatures == importedFeatures && _lastColorMode == colorMode) {
+      importedPolygons = _lastImportedPolygons ?? [];
+    } else {
+      importedPolygons = _buildImportedPolygons(importedFeatures, colorMode);
+      _lastImportedFeatures = importedFeatures;
+      _lastColorMode = colorMode;
+      _lastImportedPolygons = importedPolygons;
+    }
+
+    final importedMarkers = _buildImportedMarkers(
+      features: importedFeatures,
+      selectedFeatureIndex: _importedFeatureIndex,
+    );
     _focusImportedIfNeeded(importedFeatures, importedPolygons);
 
     // Focus desde Gestión/Propietarios: fly-to al predio solicitado.
     final focusId = ref.watch(focusPredioIdProvider);
     if (focusId != null) {
-      prediosAsync.whenData((predios) {
-        try {
-          final predio = predios.firstWhere((p) => p.id == focusId);
+      final predio = prediosById[focusId];
+      if (predio != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _flyToPredio(predio);
+          ref.read(focusPredioIdProvider.notifier).state = null;
+          setState(() => _selectedPredio = predio);
+        });
+      } else {
+        // Predio no en prediosMapaProvider (ej: recién importado) →
+        // intentar en importedFeaturesProvider como fallback.
+        final imported = ref.read(importedFeaturesProvider);
+        final match = imported.cast<Map<String, dynamic>?>().firstWhere(
+          (f) => f?['properties']?['_predioId']?.toString() == focusId,
+          orElse: () => null,
+        );
+        if (match != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
-            _flyToPredio(predio);
+            _flyToFeatureGeometry(
+              match['geometry'] is Map
+                  ? Map<String, dynamic>.from(match['geometry'] as Map)
+                  : null,
+            );
             ref.read(focusPredioIdProvider.notifier).state = null;
-            setState(() => _selectedPredio = predio);
           });
-        } catch (_) {
-          // Predio no encontrado en la lista actual — limpiar el provider.
+        } else {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) ref.read(focusPredioIdProvider.notifier).state = null;
           });
         }
+      }
+    }
+
+    // Solicitud desde Gestión: abrir modo de vinculación manual para un predio.
+    final manualVincularPredioId = ref.watch(manualVincularPredioIdProvider);
+    if (manualVincularPredioId != null) {
+      prediosAsync.whenData((predios) {
+        final target = predios.cast<Predio?>().firstWhere(
+              (p) => p?.id == manualVincularPredioId,
+              orElse: () => null,
+            );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _showCapturaModal = true;
+            _isManualLinkMode = true;
+            _isDrawing = false;
+            _manualSelectedPredioId = manualVincularPredioId;
+            _manualPredioSearchCtrl.text =
+                target != null ? _manualPredioLabel(target) : '';
+          });
+          ref.read(manualVincularPredioIdProvider.notifier).state = null;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Selecciona un poligono huérfano en el mapa y luego pulsa Vincular.'),
+            ),
+          );
+        });
       });
     }
 
@@ -104,27 +178,55 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         children: [
           prediosAsync.when(
             data: (predios) {
-              final visuals = _buildVisualData(predios, colorMode);
+              List<_PredioVisualData> visuals;
+              if (_lastPredios == predios && _lastColorModeVisual == colorMode) {
+                visuals = _lastVisuals ?? [];
+              } else {
+                visuals = _buildVisualData(predios, colorMode);
+                _lastPredios = predios;
+                _lastColorModeVisual = colorMode;
+                _lastVisuals = visuals;
+              }
+              final selectedVisual = _selectedPredio == null
+                  ? null
+                  : visuals.cast<_PredioVisualData?>().firstWhere(
+                        (v) => v?.predio.id == _selectedPredio!.id,
+                        orElse: () => null,
+                      );
               return FlutterMap(
                 mapController: _mapCtrl,
                 options: MapOptions(
                   initialCenter: _defaultCenter,
                   initialZoom: _defaultZoom,
                   onTap: (_, point) {
-                    // 1. Polígonos importados (tienen prioridad cuando no estamos en modo dibujo)
-                    if (importedFeatures.isNotEmpty && !_isDrawing) {
-                      final impIdx = _findImportedAtPoint(point, importedFeatures);
-                      if (impIdx != null) {
-                        _openCapturaForImportedFeature(importedFeatures[impIdx], impIdx);
-                        return;
-                      }
-                    }
-                    // 2. Predios guardados en DB
+                    // Predios guardados en DB
                     final tappedVisual = _findVisualAtPoint(point, visuals);
                     var shouldAutofillUbicacion = false;
+                    int? importedIdxToOpen;
+
                     setState(() {
+                      if (_isManualLinkMode) {
+                        final currentImported = ref.read(importedFeaturesProvider);
+                        final importedIdx = _findImportedAtPoint(point, currentImported);
+                        if (importedIdx != null) {
+                          final feature = currentImported[importedIdx];
+                          if (_isImportedFeatureLinked(feature)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Ese poligono ya esta vinculado a un registro de Gestion.'),
+                              ),
+                            );
+                            return;
+                          }
+                          _manualFeatureIndex = importedIdx;
+                          _importedFeatureIndex = importedIdx;
+                        }
+                        return;
+                      }
+
                       if (tappedVisual != null) {
                         _selectedPredio = tappedVisual.predio;
+                        _importedFeatureIndex = null;
                         if (_isDrawing && tappedVisual.rings.isNotEmpty) {
                           final selectedPoints = List<LatLng>.from(tappedVisual.rings.first);
                           if (selectedPoints.first != selectedPoints.last) {
@@ -133,21 +235,66 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                           _draftPoints
                             ..clear()
                             ..addAll(selectedPoints);
-                          _draftClosed = true;
                           _isDrawing = false;
                           _detectedAreaM2 = _calculateAreaSquareMeters(_draftPoints);
                           shouldAutofillUbicacion = true;
+
+                          // ── Pre-rellenar formulario con datos del predio seleccionado ──
+                          final predio = tappedVisual.predio;
+                          final nombrePropOwner = predio.propietario != null
+                              ? predio.propietario!.nombreCompleto.trim()
+                              : predio.propietarioNombre?.trim() ?? '';
+                          _propietarioCtrl.text = nombrePropOwner;
+                          _tramoCtrl.text = predio.tramo.trim();
+                          _kmInicioCtrl.text = predio.kmInicio != null
+                              ? _formatKm(predio.kmInicio!)
+                              : '0+000';
+                          _kmFinCtrl.text = predio.kmFin != null
+                              ? _formatKm(predio.kmFin!)
+                              : '0+000';
+                          _tipoPropiedad = (predio.tipoPropiedad.trim().isNotEmpty &&
+                                  predio.tipoPropiedad != 'PRIVADA')
+                              ? predio.tipoPropiedad
+                              : predio.tipoPropiedad.trim().isNotEmpty
+                                  ? predio.tipoPropiedad
+                                  : null;
+                          _proyecto = _normalizeProyecto(predio.proyecto) ??
+                              _inferProyectoFromText([
+                                predio.proyecto ?? '',
+                                predio.oficio ?? '',
+                                predio.copFirmado ?? '',
+                                predio.poligonoDwg ?? '',
+                                predio.claveCatastral,
+                              ].join(' '));
                         }
                         return;
                       }
 
-                      _selectedPredio = null;
+                      // Buscar en polígonos importados (naranja) cuando modo selección activo
                       if (_isDrawing) {
-                        _draftPoints.clear();
-                        _draftClosed = false;
-                        _detectedAreaM2 = 0;
+                        final currentImported = ref.read(importedFeaturesProvider);
+                        final importedIdx = _findImportedAtPoint(point, currentImported);
+                        if (importedIdx != null) {
+                          importedIdxToOpen = importedIdx;
+                        }
+                        // Toque fuera de cualquier polígono → no borrar draft, no hacer nada
+                        return;
                       }
+
+                      _selectedPredio = null;
                     });
+
+                    // Abrir captura fuera del setState para evitar setState anidado
+                    if (importedIdxToOpen != null) {
+                      final currentImported = ref.read(importedFeaturesProvider);
+                      if (importedIdxToOpen! < currentImported.length) {
+                        _openCapturaForImportedFeature(
+                          currentImported[importedIdxToOpen!],
+                          importedIdxToOpen!,
+                        );
+                      }
+                    }
+
                     if (shouldAutofillUbicacion) {
                       _autofillEstadoMunicipioDesdePoligono();
                     }
@@ -178,7 +325,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                           .map(
                             (sp) => Polygon(
                               points: sp.points,
-                              color: _savedPolygonColor(sp, colorMode).withValues(alpha: 0.32),
+                              color: _savedPolygonColor(sp, colorMode).withValues(alpha: 0.46),
                               borderColor: _savedPolygonColor(sp, colorMode),
                               borderStrokeWidth: 2,
                             ),
@@ -190,27 +337,29 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                       polygons: [
                         Polygon(
                           points: _draftPoints,
-                          color: _draftPolygonColor(colorMode).withValues(alpha: 0.25),
-                          borderColor: _draftPolygonColor(colorMode),
+                          color: _draftPolygonColor(colorMode).withValues(alpha: 0.4),
+                          borderColor: _draftPolygonColor(colorMode).withValues(alpha: 0.4),
                           borderStrokeWidth: 2,
                         ),
                       ],
                     ),
                   MarkerLayer(
-                    markers: visuals
-                        .where((v) => v.markerPoint != null)
-                        .map(
-                          (v) => Marker(
-                            point: v.markerPoint!,
-                            width: 36,
-                            height: 36,
-                            child: GestureDetector(
-                              onTap: () => setState(() => _selectedPredio = v.predio),
-                              child: _buildMarkerDot(v.color, v.predio.cop),
+                    markers: selectedVisual != null && selectedVisual.markerPoint != null
+                        ? [
+                            Marker(
+                              point: selectedVisual.markerPoint!,
+                              width: 36,
+                              height: 36,
+                              child: GestureDetector(
+                                onTap: () => setState(() {
+                                  _selectedPredio = selectedVisual.predio;
+                                  _importedFeatureIndex = null;
+                                }),
+                                child: _buildMarkerDot(selectedVisual.color),
+                              ),
                             ),
-                          ),
-                        )
-                        .toList(),
+                          ]
+                        : const [],
                   ),
                 ],
               );
@@ -232,25 +381,70 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Material(
-                  color: Colors.white,
-                  elevation: 4,
-                  borderRadius: BorderRadius.circular(10),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => setState(() => _showLayersPanel = !_showLayersPanel),
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.layers_outlined,
-                        size: 22,
-                        color: _showLayersPanel ? AppColors.primary : const Color(0xFF555555),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Material(
+                      color: Colors.white,
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () => setState(() {
+                          _showVisualizacionPanel = !_showVisualizacionPanel;
+                          if (_showVisualizacionPanel) {
+                            _showLayersPanel = false;
+                          }
+                        }),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          alignment: Alignment.center,
+                          child: Icon(
+                            _showVisualizacionPanel
+                                ? Icons.visibility
+                                : Icons.visibility_outlined,
+                            size: 22,
+                            color: _showVisualizacionPanel
+                                ? AppColors.primary
+                                : const Color(0xFF555555),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    Material(
+                      color: Colors.white,
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () => setState(() {
+                          _showLayersPanel = !_showLayersPanel;
+                          if (_showLayersPanel) {
+                            _showVisualizacionPanel = false;
+                          }
+                        }),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          alignment: Alignment.center,
+                          child: Icon(
+                            Icons.layers_outlined,
+                            size: 22,
+                            color: _showLayersPanel
+                                ? AppColors.primary
+                                : const Color(0xFF555555),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                if (_showVisualizacionPanel) ...[
+                  const SizedBox(height: 6),
+                  _buildVisualizacionControl(colorMode),
+                ],
                 if (_showLayersPanel) ...[
                   const SizedBox(height: 6),
                   _buildLayersPanel(colorMode, baseLayer),
@@ -263,31 +457,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
             left: 16,
             child: _buildCapturaToggleButton(),
           ),
-          // Badge de polígonos importados pendientes
-          if (importedFeatures.isNotEmpty)
-            Positioned(
-              top: 72,
-              left: 16,
-              child: Material(
-                color: const Color(0xFFFF8C00),
-                borderRadius: BorderRadius.circular(20),
-                elevation: 3,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.upload_file, color: Colors.white, size: 15),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${importedFeatures.length} polígono${importedFeatures.length == 1 ? '' : 's'} importado${importedFeatures.length == 1 ? '' : 's'} — toca para capturar',
-                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+
           if (_showCapturaModal)
             Positioned(
               top: 72,
@@ -300,6 +470,42 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               left: 16,
               right: 16,
               child: _buildPredioCard(_selectedPredio!),
+            ),
+          // Banner "procesando importación" — bloquea interacción hasta que BD confirme
+          if (ref.watch(importacionEstadoProvider) == ImportacionEstado.procesando)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black45,
+                child: Center(
+                  child: Card(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 32, vertical: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Guardando predios en la base de datos…',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Los polígonos se pintarán cuando el backend confirme.',
+                            style: TextStyle(
+                                fontSize: 12, color: AppColors.textLight),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
         ],
     ),
@@ -324,8 +530,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           ? Polygon(
               points: rings.first,
               holePointsList: rings.length > 1 ? rings.sublist(1) : const [],
-              color: color.withValues(alpha: 0.28),
-              borderColor: color,
+              color: color.withValues(alpha: 0.46),
+              borderColor: color.withValues(alpha: 0.46),
               borderStrokeWidth: 1.8,
             )
           : null;
@@ -410,70 +616,294 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
 
   bool _isNoLiberado(String? estatus) => estatus == 'No liberado';
 
-  List<Polygon> _buildImportedPolygons(List<Map<String, dynamic>> features) {
+  List<Polygon> _buildImportedPolygons(
+    List<Map<String, dynamic>> features,
+    MapaColorMode mode,
+  ) {
     final polygons = <Polygon>[];
     for (int i = 0; i < features.length; i++) {
       final feature = features[i];
       final geometry = _geometryAsMap(feature['geometry']);
       final extractedPolygons = _extractPolygons(geometry);
-      print('🧭 Import feature $i: type=${geometry?['type']} polygons=${extractedPolygons.length}');
+      final color = _importedFeatureColor(feature, mode);
       for (final rings in extractedPolygons) {
         if (rings.isEmpty || rings.first.length < 3) continue;
         polygons.add(
           Polygon(
             points: rings.first,
             holePointsList: rings.length > 1 ? rings.sublist(1) : const [],
-            color: const Color(0x33FF8C00),
-            borderColor: const Color(0xFFFF8C00),
+            color: color.withValues(alpha: 0.4),
+            borderColor: color.withValues(alpha: 0.4),
             borderStrokeWidth: 2.5,
           ),
         );
       }
     }
-    print('🗺️ Polígonos importados renderizables: ${polygons.length}');
     return polygons;
   }
 
-  List<Marker> _buildImportedMarkers(List<Polygon> polygons) {
-    final markers = <Marker>[];
-    for (final polygon in polygons) {
-      final center = _centroidOfRing(polygon.points);
-      if (center == null) continue;
-      markers.add(
-        Marker(
-          point: center,
-          width: 22,
-          height: 22,
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF8C00),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66FF8C00),
-                  blurRadius: 8,
-                  spreadRadius: 1,
-                ),
-              ],
-            ),
+  List<Marker> _buildImportedMarkers({
+    required List<Map<String, dynamic>> features,
+    required int? selectedFeatureIndex,
+  }) {
+    if (selectedFeatureIndex == null ||
+        selectedFeatureIndex < 0 ||
+        selectedFeatureIndex >= features.length) {
+      return const [];
+    }
+
+    final feature = features[selectedFeatureIndex];
+    final geometry = _geometryAsMap(feature['geometry']);
+    final polygons = _extractPolygons(geometry);
+    final center = _centroidOfPolygons(polygons);
+    if (center == null) return const [];
+
+    return [
+      Marker(
+        point: center,
+        width: 22,
+        height: 22,
+        child: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFFF8C00),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66FF8C00),
+                blurRadius: 8,
+                spreadRadius: 1,
+              ),
+            ],
           ),
         ),
-      );
-    }
-    return markers;
+      ),
+    ];
   }
 
-  LatLng? _centroidOfRing(List<LatLng> ring) {
-    if (ring.length < 3) return null;
+  LatLng? _centroidOfPolygons(List<List<List<LatLng>>> polygons) {
+    if (polygons.isEmpty) return null;
+
+    List<List<LatLng>>? bestRings;
+    var bestArea = -1.0;
+    for (final rings in polygons) {
+      if (rings.isEmpty || rings.first.length < 3) continue;
+      var area = _ringSignedArea(rings.first).abs();
+      for (final hole in rings.skip(1)) {
+        area -= _ringSignedArea(hole).abs();
+      }
+      if (area > bestArea) {
+        bestArea = area;
+        bestRings = rings;
+      }
+    }
+
+    if (bestRings == null) return null;
+    return _pointForPolygonRings(bestRings);
+  }
+
+  (LatLng, double)? _ringCentroidWithArea(List<LatLng> ring) {
     final points = ring.length > 1 && ring.first == ring.last
         ? ring.sublist(0, ring.length - 1)
         : ring;
-    if (points.isEmpty) return null;
+    if (points.length < 3) return null;
 
-    final lat = points.map((p) => p.latitude).reduce((a, b) => a + b) / points.length;
-    final lng = points.map((p) => p.longitude).reduce((a, b) => a + b) / points.length;
+    var twiceArea = 0.0;
+    var centroidX6A = 0.0;
+    var centroidY6A = 0.0;
+
+    for (var i = 0; i < points.length; i++) {
+      final p1 = points[i];
+      final p2 = points[(i + 1) % points.length];
+      final cross = (p1.longitude * p2.latitude) - (p2.longitude * p1.latitude);
+      twiceArea += cross;
+      centroidX6A += (p1.longitude + p2.longitude) * cross;
+      centroidY6A += (p1.latitude + p2.latitude) * cross;
+    }
+
+    final signedArea = twiceArea / 2;
+    if (signedArea.abs() < 1e-12) return null;
+
+    final cx = centroidX6A / (6 * signedArea);
+    final cy = centroidY6A / (6 * signedArea);
+
+    return (LatLng(cy, cx), signedArea.abs());
+  }
+
+  LatLng? _pointForPolygonRings(List<List<LatLng>> rings) {
+    if (rings.isEmpty || rings.first.length < 3) return null;
+
+    final outerCentroid = _ringCentroidWithArea(rings.first)?.$1;
+    if (outerCentroid != null && _isPointInPolygonWithHoles(outerCentroid, rings)) {
+      return outerCentroid;
+    }
+
+    final polylabel = _polylabelPoint(rings);
+    if (polylabel != null) return polylabel;
+
+    final outer = rings.first;
+    final lat = outer.map((p) => p.latitude).reduce((a, b) => a + b) / outer.length;
+    final lng = outer.map((p) => p.longitude).reduce((a, b) => a + b) / outer.length;
     return LatLng(lat, lng);
+  }
+
+  LatLng? _polylabelPoint(List<List<LatLng>> rings) {
+    final outer = rings.first;
+    final cleanOuter = outer.length > 1 && outer.first == outer.last
+        ? outer.sublist(0, outer.length - 1)
+        : outer;
+    if (cleanOuter.length < 3) return null;
+
+    var minLng = cleanOuter.first.longitude;
+    var maxLng = cleanOuter.first.longitude;
+    var minLat = cleanOuter.first.latitude;
+    var maxLat = cleanOuter.first.latitude;
+
+    for (final p in cleanOuter.skip(1)) {
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+    }
+
+    final width = maxLng - minLng;
+    final height = maxLat - minLat;
+    final cellSize = math.min(width, height);
+    if (cellSize <= 0) {
+      final fallback = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
+      return _isPointInPolygonWithHoles(fallback, rings) ? fallback : null;
+    }
+
+    final precision = math.max(cellSize / 1000, 1e-7);
+    final cells = <_PolylabelCell>[];
+
+    for (double x = minLng; x < maxLng; x += cellSize) {
+      for (double y = minLat; y < maxLat; y += cellSize) {
+        final c = _PolylabelCell(
+          x + cellSize / 2,
+          y + cellSize / 2,
+          cellSize / 2,
+          _signedDistanceToPolygonEdges(LatLng(y + cellSize / 2, x + cellSize / 2), rings),
+        );
+        cells.add(c);
+      }
+    }
+
+    var bestCell = _PolylabelCell(
+      (minLng + maxLng) / 2,
+      (minLat + maxLat) / 2,
+      0,
+      _signedDistanceToPolygonEdges(LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2), rings),
+    );
+
+    final centroid = _ringCentroidWithArea(rings.first)?.$1;
+    if (centroid != null) {
+      final centroidCell = _PolylabelCell(
+        centroid.longitude,
+        centroid.latitude,
+        0,
+        _signedDistanceToPolygonEdges(centroid, rings),
+      );
+      if (centroidCell.d > bestCell.d) bestCell = centroidCell;
+    }
+
+    while (cells.isNotEmpty) {
+      cells.sort((a, b) => b.max.compareTo(a.max));
+      final cell = cells.removeAt(0);
+
+      if (cell.d > bestCell.d) {
+        bestCell = cell;
+      }
+
+      if (cell.max - bestCell.d <= precision) continue;
+
+      final h = cell.h / 2;
+      cells.addAll([
+        _PolylabelCell(cell.x - h, cell.y - h, h, _signedDistanceToPolygonEdges(LatLng(cell.y - h, cell.x - h), rings)),
+        _PolylabelCell(cell.x + h, cell.y - h, h, _signedDistanceToPolygonEdges(LatLng(cell.y - h, cell.x + h), rings)),
+        _PolylabelCell(cell.x - h, cell.y + h, h, _signedDistanceToPolygonEdges(LatLng(cell.y + h, cell.x - h), rings)),
+        _PolylabelCell(cell.x + h, cell.y + h, h, _signedDistanceToPolygonEdges(LatLng(cell.y + h, cell.x + h), rings)),
+      ]);
+    }
+
+    final point = LatLng(bestCell.y, bestCell.x);
+    return _isPointInPolygonWithHoles(point, rings) ? point : null;
+  }
+
+  bool _isPointInPolygonWithHoles(LatLng point, List<List<LatLng>> rings) {
+    if (rings.isEmpty) return false;
+    if (!_pointInRing(point, rings.first)) return false;
+    for (final hole in rings.skip(1)) {
+      if (_pointInRing(point, hole)) return false;
+    }
+    return true;
+  }
+
+  double _ringSignedArea(List<LatLng> ring) {
+    final points = ring.length > 1 && ring.first == ring.last
+        ? ring.sublist(0, ring.length - 1)
+        : ring;
+    if (points.length < 3) return 0;
+
+    var sum = 0.0;
+    for (var i = 0; i < points.length; i++) {
+      final p1 = points[i];
+      final p2 = points[(i + 1) % points.length];
+      sum += (p1.longitude * p2.latitude) - (p2.longitude * p1.latitude);
+    }
+    return sum / 2;
+  }
+
+  double _signedDistanceToPolygonEdges(LatLng point, List<List<LatLng>> rings) {
+    var minDistSq = double.infinity;
+
+    for (final ring in rings) {
+      final points = ring.length > 1 && ring.first == ring.last
+          ? ring.sublist(0, ring.length - 1)
+          : ring;
+      if (points.length < 2) continue;
+
+      for (var i = 0; i < points.length; i++) {
+        final a = points[i];
+        final b = points[(i + 1) % points.length];
+        final distSq = _distanceToSegmentSquared(point, a, b);
+        if (distSq < minDistSq) minDistSq = distSq;
+      }
+    }
+
+    if (minDistSq == double.infinity) return -1;
+
+    final inside = _isPointInPolygonWithHoles(point, rings);
+    final dist = math.sqrt(minDistSq);
+    return inside ? dist : -dist;
+  }
+
+  double _distanceToSegmentSquared(LatLng p, LatLng a, LatLng b) {
+    final vx = b.longitude - a.longitude;
+    final vy = b.latitude - a.latitude;
+    final wx = p.longitude - a.longitude;
+    final wy = p.latitude - a.latitude;
+
+    final c1 = (wx * vx) + (wy * vy);
+    if (c1 <= 0) {
+      final dx = p.longitude - a.longitude;
+      final dy = p.latitude - a.latitude;
+      return (dx * dx) + (dy * dy);
+    }
+
+    final c2 = (vx * vx) + (vy * vy);
+    if (c2 <= c1) {
+      final dx = p.longitude - b.longitude;
+      final dy = p.latitude - b.latitude;
+      return (dx * dx) + (dy * dy);
+    }
+
+    final t = c1 / c2;
+    final projX = a.longitude + (t * vx);
+    final projY = a.latitude + (t * vy);
+    final dx = p.longitude - projX;
+    final dy = p.latitude - projY;
+    return (dx * dx) + (dy * dy);
   }
 
   /// Centra el mapa en el predio dado (polígono o punto).
@@ -503,6 +933,38 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
     } catch (_) {
       // Controlador no listo todavía — ignorar silenciosamente.
+    }
+  }
+
+  /// Centra el mapa en una geometría GeoJSON cruda.
+  /// Usado como fallback cuando el predio aún no está en prediosMapaProvider.
+  void _flyToFeatureGeometry(Map<String, dynamic>? geometry) {
+    if (geometry == null) return;
+    try {
+      final polygons = _extractPolygons(geometry);
+      if (polygons.isNotEmpty) {
+        final allPoints = <LatLng>[];
+        for (final rings in polygons) {
+            for (final ring in rings) {
+              allPoints.addAll(ring);
+            }
+        }
+        if (allPoints.isNotEmpty) {
+          final bounds = LatLngBounds(allPoints.first, allPoints.first);
+            for (final p in allPoints.skip(1)) {
+              bounds.extend(p);
+            }
+          _mapCtrl.fitCamera(
+            CameraFit.bounds(
+              bounds: bounds,
+              padding: const EdgeInsets.all(80),
+            ),
+          );
+          return;
+        }
+      }
+    } catch (_) {
+      // Controlador no listo — ignorar.
     }
   }
 
@@ -633,7 +1095,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       final sampleY = pairs.map((p) => p.$2).toList();
       final utmZone = _detectMexicoUtmZone(sampleX, sampleY);
       if (utmZone == null) {
-        print('⚠️ No se pudo interpretar anillo: sin lat/lng ni zona UTM detectable');
         return const [];
       }
 
@@ -648,7 +1109,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           .whereType<LatLng>()
           .toList();
 
-      print('✅ Anillo convertido desde UTM zona ${utmZone}N: ${converted.length} puntos');
       return converted;
     } catch (_) {
       return const [];
@@ -747,49 +1207,25 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
   }
 
   LatLng? _markerPoint(Predio predio, List<List<LatLng>> rings) {
+    if (rings.isNotEmpty) {
+      return _pointForPolygonRings(rings);
+    }
+
     if (predio.latitud != null && predio.longitud != null) {
       return LatLng(predio.latitud!, predio.longitud!);
     }
-    if (rings.isEmpty || rings.first.isEmpty) return null;
-
-    final points = rings.first;
-    final lat = points.map((p) => p.latitude).reduce((a, b) => a + b) / points.length;
-    final lng = points.map((p) => p.longitude).reduce((a, b) => a + b) / points.length;
-    return LatLng(lat, lng);
+    return null;
   }
 
-  Widget _buildMarkerDot(Color color, bool tieneCop) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: 0.38),
-                blurRadius: 8,
-                spreadRadius: 1,
-              ),
-            ],
-          ),
-        ),
-        Positioned(
-          right: -1,
-          top: -1,
-          child: Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: tieneCop ? AppColors.secondary : Colors.grey.shade500,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 1.4),
-            ),
-          ),
+  Widget _buildMarkerDot(Color color) {
+    return Icon(
+      Icons.location_pin,
+      size: 34,
+      color: color,
+      shadows: [
+        Shadow(
+          color: color.withValues(alpha: 0.38),
+          blurRadius: 8,
         ),
       ],
     );
@@ -847,16 +1283,18 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: SizedBox(
-          width: 220,
+          width: 240,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Ver color de mapa por',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+              const Text(
+                'Visualizar polígonos por',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF555555),
+                ),
               ),
               const SizedBox(height: 6),
               DropdownButtonHideUnderline(
@@ -876,47 +1314,12 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                   onChanged: (value) {
                     if (value == null) return;
                     ref.read(mapaColorModeProvider.notifier).state = value;
+                    setState(() => _showVisualizacionPanel = false);
                   },
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBaseLayerControl(MapaBaseLayer currentLayer) {
-    final isSatelital = currentLayer == MapaBaseLayer.satelital;
-    return Card(
-      elevation: 6,
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          children: [
-            Text(
-              'Capa',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const SizedBox(height: 6),
-            _layerButton(
-              title: 'Estandar',
-              subtitle: 'Calles y etiquetas',
-              icon: Icons.map_outlined,
-              selected: !isSatelital,
-              onTap: () => ref.read(mapaBaseLayerProvider.notifier).state = MapaBaseLayer.estandar,
-            ),
-            const SizedBox(height: 6),
-            _layerButton(
-              title: 'Satelital',
-              subtitle: 'Imagen aerea',
-              icon: Icons.satellite_alt_outlined,
-              selected: isSatelital,
-              onTap: () => ref.read(mapaBaseLayerProvider.notifier).state = MapaBaseLayer.satelital,
-            ),
-          ],
         ),
       ),
     );
@@ -1040,6 +1443,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
 
   Widget _buildCapturaModal() {
     final area = _detectedAreaM2 > 0 ? _detectedAreaM2 : _calculateAreaSquareMeters(_draftPoints);
+    final predios = ref.watch(prediosMapaProvider).asData?.value ?? const <Predio>[];
+    final prediosNoVinculados = _prediosSinPoligono(predios);
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 400),
       child: Container(
@@ -1098,6 +1503,134 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _toggleManualLinkMode,
+                icon: Icon(
+                  _isManualLinkMode ? Icons.link_off_outlined : Icons.link_outlined,
+                  size: 16,
+                ),
+                label: Text(
+                  _isManualLinkMode
+                      ? 'Salir de asociacion manual'
+                      : 'Asociacion manual',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _isManualLinkMode
+                      ? AppColors.secondary
+                      : const Color(0xFF8A8A8A),
+                  side: BorderSide(
+                    color: _isManualLinkMode
+                        ? AppColors.secondary.withValues(alpha: 0.5)
+                        : const Color(0xFFD9D9D9),
+                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            if (_isManualLinkMode) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF6F9FB),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE3E8ED)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Asociacion manual',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _manualFeatureIndex == null
+                          ? '1) Toca un poligono huérfano en el mapa.'
+                          : 'Poligono seleccionado: ${_poligonoIdFromFeature(importedFeatures: ref.read(importedFeaturesProvider), index: _manualFeatureIndex!)}',
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF5E6670)),
+                    ),
+                    const SizedBox(height: 8),
+                    Autocomplete<Predio>(
+                      optionsBuilder: (value) {
+                        final query = value.text.trim().toLowerCase();
+                        final source = prediosNoVinculados;
+                        if (query.isEmpty) return source.take(20);
+                        return source.where((p) {
+                          final label = _manualPredioLabel(p).toLowerCase();
+                          return label.contains(query);
+                        }).take(20);
+                      },
+                      displayStringForOption: _manualPredioLabel,
+                      onSelected: (selected) {
+                        setState(() {
+                          _manualSelectedPredioId = selected.id;
+                          _manualPredioSearchCtrl.text = _manualPredioLabel(selected);
+                        });
+                      },
+                      fieldViewBuilder: (context, textController, focusNode, onSubmitted) {
+                        if (textController.text != _manualPredioSearchCtrl.text) {
+                          textController.value = TextEditingValue(
+                            text: _manualPredioSearchCtrl.text,
+                            selection: TextSelection.collapsed(
+                              offset: _manualPredioSearchCtrl.text.length,
+                            ),
+                          );
+                        }
+                        return TextField(
+                          controller: textController,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: 'Registro de Gestion (sin poligono)',
+                            labelStyle: const TextStyle(fontSize: 11),
+                            hintText: 'Buscar por clave o propietario',
+                            isDense: true,
+                            contentPadding:
+                                const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          onChanged: (v) {
+                            setState(() {
+                              _manualPredioSearchCtrl.text = v;
+                              _manualSelectedPredioId = null;
+                            });
+                          },
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: (_manualFeatureIndex == null ||
+                                _manualSelectedPredioId == null ||
+                                _isLinkingManual)
+                            ? null
+                            : () => _vincularPoligonoManual(predios),
+                        icon: _isLinkingManual
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.link_rounded, size: 16),
+                        label: Text(_isLinkingManual ? 'Vinculando...' : 'Vincular'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2A5B52),
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (_isDrawing)
               const Padding(
                 padding: EdgeInsets.only(top: 4),
@@ -1227,7 +1760,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _draftPoints.length >= 4 ? _saveSelectedPolygon : null,
+                    onPressed: _draftPoints.length >= 4
+                        ? (_importedFeatureIndex != null
+                            ? _saveImportedFeatureAsPredio
+                            : _saveSelectedPolygon)
+                        : null,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF2A5B52),
                       foregroundColor: Colors.white,
@@ -1268,6 +1805,195 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         ),
       ),
     );
+  }
+
+  void _toggleManualLinkMode() {
+    setState(() {
+      _isManualLinkMode = !_isManualLinkMode;
+      _isDrawing = false;
+      if (!_isManualLinkMode) {
+        _manualFeatureIndex = null;
+        _manualSelectedPredioId = null;
+        _manualPredioSearchCtrl.clear();
+      }
+    });
+  }
+
+  List<Predio> _prediosSinPoligono(List<Predio> predios) {
+    return predios.where((p) {
+      final vinculado = p.poligonoInsertado || p.geometry != null;
+      return !vinculado;
+    }).toList(growable: false);
+  }
+
+  String _manualPredioLabel(Predio predio) {
+    final owner = predio.nombrePropietario.trim();
+    return '${predio.claveCatastral} · $owner';
+  }
+
+  bool _isImportedFeatureLinked(Map<String, dynamic> feature) {
+    final s = _linkedPredioIdFromFeature(feature);
+    return s != null && s.isNotEmpty;
+  }
+
+  String? _linkedPredioIdFromFeature(Map<String, dynamic> feature) {
+    final rawProps = feature['properties'];
+    if (rawProps is! Map) return null;
+    final props = Map<String, dynamic>.from(rawProps);
+    final predioId = props['_predioId'] ?? props['predio_id'];
+    final s = predioId?.toString().trim();
+    if (s == null || s.isEmpty) return null;
+    return s;
+  }
+
+  String _poligonoIdFromFeature({
+    required List<Map<String, dynamic>> importedFeatures,
+    required int index,
+  }) {
+    if (index < 0 || index >= importedFeatures.length) return 'sin-id';
+    final feature = importedFeatures[index];
+    final rawProps = feature['properties'];
+    if (rawProps is! Map) return 'feature-$index';
+    final props = Map<String, dynamic>.from(rawProps);
+    final value = props['id_poligono'] ??
+        props['ID_POLIGONO'] ??
+        props['fid'] ??
+        props['FID'] ??
+        props['objectid'] ??
+        props['OBJECTID'] ??
+        props['id'] ??
+        props['ID'];
+    final asText = value?.toString().trim();
+    if (asText != null && asText.isNotEmpty) return asText;
+    return 'feature-$index';
+  }
+
+  bool _sameGeometryMap(
+    Map<String, dynamic>? a,
+    Map<String, dynamic>? b,
+  ) {
+    if (a == null || b == null) return false;
+    return jsonEncode(a) == jsonEncode(b);
+  }
+
+  List<Map<String, dynamic>> _removeImportedDuplicatesAfterLink({
+    required List<Map<String, dynamic>> imported,
+    required int selectedIndex,
+    required String linkedPredioId,
+    required String linkedPoligonoId,
+    required Map<String, dynamic> linkedGeometry,
+  }) {
+    final output = <Map<String, dynamic>>[];
+    for (var i = 0; i < imported.length; i++) {
+      final feature = imported[i];
+      if (i == selectedIndex) {
+        continue;
+      }
+
+      final samePredio = _linkedPredioIdFromFeature(feature) == linkedPredioId;
+      final samePoligono =
+          _poligonoIdFromFeature(importedFeatures: imported, index: i) == linkedPoligonoId;
+      final geometry = feature['geometry'] is Map
+          ? Map<String, dynamic>.from(feature['geometry'] as Map)
+          : null;
+      final sameGeometry = _sameGeometryMap(geometry, linkedGeometry);
+
+      if (samePredio || samePoligono || sameGeometry) {
+        continue;
+      }
+      output.add(feature);
+    }
+    return output;
+  }
+
+  Future<void> _vincularPoligonoManual(List<Predio> predios) async {
+    final idx = _manualFeatureIndex;
+    final predioId = _manualSelectedPredioId;
+    if (idx == null || predioId == null) return;
+
+    final imported = ref.read(importedFeaturesProvider);
+    if (idx < 0 || idx >= imported.length) return;
+    final feature = imported[idx];
+    final geometry = feature['geometry'] is Map
+        ? Map<String, dynamic>.from(feature['geometry'] as Map)
+        : null;
+    if (geometry == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('El poligono seleccionado no tiene geometria valida.')),
+      );
+      return;
+    }
+
+    final predio = predios.cast<Predio?>().firstWhere(
+          (p) => p?.id == predioId,
+          orElse: () => null,
+        );
+    if (predio == null) return;
+
+    setState(() => _isLinkingManual = true);
+    try {
+      final idPoligono = _poligonoIdFromFeature(importedFeatures: imported, index: idx);
+
+      if (predio.id.startsWith('local-')) {
+        ref.read(localPrediosProvider.notifier).updatePredio(
+              predio.copyWith(
+                geometry: geometry,
+                poligonoInsertado: true,
+                updatedAt: DateTime.now(),
+              ),
+            );
+      } else {
+        await ref.read(prediosRepositoryProvider).vincularPoligonoConPredio(
+              idPoligono: idPoligono,
+              idGestion: predio.id,
+              geometry: geometry,
+            );
+      }
+
+        final removedLocalDuplicates =
+            ref.read(localPrediosProvider.notifier).removeDuplicatesAfterManualLink(
+              keepPredioId: predio.id,
+              linkedGeometry: geometry,
+              keepClave: predio.claveCatastral,
+              linkedOwner: predio.nombrePropietario,
+            );
+
+      final updatedImported = _removeImportedDuplicatesAfterLink(
+        imported: imported,
+        selectedIndex: idx,
+        linkedPredioId: predio.id,
+        linkedPoligonoId: idPoligono,
+        linkedGeometry: geometry,
+      );
+      ref.read(importedFeaturesProvider.notifier).state = updatedImported;
+
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+
+      if (!mounted) return;
+      setState(() {
+        _isLinkingManual = false;
+        _manualFeatureIndex = null;
+        _manualSelectedPredioId = null;
+        _manualPredioSearchCtrl.clear();
+        _isManualLinkMode = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            removedLocalDuplicates > 0
+                ? 'Vinculacion completada. Se eliminaron $removedLocalDuplicates duplicado(s).'
+                : 'Vinculacion completada correctamente.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLinkingManual = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo vincular el poligono: $e')),
+      );
+    }
   }
 
   Widget _buildCapturaToggleButton() {
@@ -1363,7 +2089,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF555555))),
         const SizedBox(height: 2),
         DropdownButtonFormField<String>(
-          value: value,
+          initialValue: value,
           icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF9A9A9A), size: 18),
           style: const TextStyle(fontSize: 13, color: Colors.black87),
           decoration: InputDecoration(
@@ -1434,7 +2160,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     if (!_isDrawing) {
       setState(() {
         _isDrawing = true;
-        _draftClosed = false;
         _draftPoints.clear();
         _detectedAreaM2 = 0;
       });
@@ -1444,7 +2169,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     setState(() {
       _isDrawing = false;
       _draftPoints.clear();
-      _draftClosed = false;
       _detectedAreaM2 = 0;
     });
   }
@@ -1453,7 +2177,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     setState(() {
       _importedFeatureIndex = null;
       _draftPoints.clear();
-      _draftClosed = false;
       _isDrawing = false;
       _detectedAreaM2 = 0;
       _detectingUbicacion = false;
@@ -1605,12 +2328,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
   Future<void> _saveSelectedPolygon() async {
     if (_draftPoints.length < 4) return;
 
-    // Feature importado → crear nuevo predio
-    if (_importedFeatureIndex != null) {
-      await _saveImportedFeatureAsPredio();
-      return;
-    }
-
     if (_selectedPredio == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selecciona un predio antes de guardar el poligono.')),
@@ -1627,21 +2344,29 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       final isDemo = ref.read(demoModeProvider);
       final superficieDetectada = _detectedAreaM2 > 0 ? _detectedAreaM2 : _calculateAreaSquareMeters(_draftPoints);
 
-      if (isDemo) {
-        ref.read(demoPrediosNotifierProvider.notifier).updatePredio(
-              selected.copyWith(
-                geometry: geoJson,
-                poligonoInsertado: true,
-                superficie: superficieDetectada,
-                tipoPropiedad: _tipoPropiedad ?? 'Sin tipo',
-                proyecto: proyectoNormalizado,
-                oficio: oficioConProyecto,
-                cop: _isLiberado(_estatusPredio),
-                identificacion: false,
-                levantamiento: false,
-                negociacion: _isNoLiberado(_estatusPredio),
-              ),
-            );
+      final isLocal = selected.id.startsWith('local-');
+
+      if (isDemo || isLocal) {
+        final notifier = isDemo
+            ? ref.read(demoPrediosNotifierProvider.notifier)
+            : null;
+        final updatedPredio = selected.copyWith(
+          geometry: geoJson,
+          poligonoInsertado: true,
+          superficie: superficieDetectada,
+          tipoPropiedad: _tipoPropiedad ?? 'Sin tipo',
+          proyecto: proyectoNormalizado,
+          oficio: oficioConProyecto,
+          cop: _isLiberado(_estatusPredio),
+          identificacion: false,
+          levantamiento: false,
+          negociacion: _isNoLiberado(_estatusPredio),
+        );
+        if (isLocal) {
+          ref.read(localPrediosProvider.notifier).updatePredio(updatedPredio);
+        } else {
+          notifier!.updatePredio(updatedPredio);
+        }
       } else {
         final repo = ref.read(prediosRepositoryProvider);
         await repo.updatePredio(selected.id, {
@@ -1674,7 +2399,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           ),
         );
         _draftPoints.clear();
-        _draftClosed = false;
         _isDrawing = false;
         _detectedAreaM2 = 0;
       });
@@ -1751,7 +2475,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       _draftPoints
         ..clear()
         ..addAll(points);
-      _draftClosed = true;
       _isDrawing = false;
       _detectedAreaM2 = _calculateAreaSquareMeters(points);
       _showCapturaModal = true;
@@ -1773,6 +2496,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     if (_estadoCtrl.text.isEmpty || _municipioCtrl.text.isEmpty) {
       _autofillEstadoMunicipioDesdePoligono();
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Este poligono no tiene registro en Gestion. Completa la captura para vincularlo.'),
+      ),
+    );
   }
 
   /// Crea un nuevo predio en la base de datos a partir del feature importado activo.
@@ -1882,7 +2610,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           ),
         );
         _draftPoints.clear();
-        _draftClosed = false;
         _isDrawing = false;
         _detectedAreaM2 = 0;
       });
@@ -1895,6 +2622,13 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         SnackBar(content: Text('No se pudo guardar el predio: $e')),
       );
     }
+  }
+
+  /// Convierte un double de km (ej. 10.5) al formato "10+500"
+  String _formatKm(double km) {
+    final enteros = km.truncate();
+    final metros = ((km - enteros) * 1000).round();
+    return '$enteros+${metros.toString().padLeft(3, '0')}';
   }
 
   /// Convierte un string KM (ej. "0+000" o "10.5") a double
@@ -2021,17 +2755,60 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     );
   }
 
+  Color _importedFeatureColor(Map<String, dynamic> feature, MapaColorMode mode) {
+    final props = feature['properties'];
+    final propsMap = props is Map ? Map<String, dynamic>.from(props) : <String, dynamic>{};
+    final allProps = _flattenFeatureProps(feature, propsMap);
+
+    if (mode == MapaColorMode.tipoPropiedad) {
+      final tipo = _propValue(allProps, [
+        'tipo_propiedad',
+        'tipopropiedad',
+        'tipo propiedad',
+        'uso_suelo',
+        'usosuelo',
+      ]);
+      return AppColors.tipoPropiedadColor(tipo ?? 'Sin tipo');
+    }
+
+    final estatus = _propValue(allProps, [
+      'estatus_predio',
+      'estatus',
+      'estado_predio',
+      'situacion',
+    ]);
+
+    if (estatus != null) {
+      final normalized = estatus.trim().toLowerCase();
+      if (normalized == 'liberado') return _estatusColor('Liberado');
+      if (normalized == 'no liberado') return _estatusColor('No liberado');
+    }
+
+    return _estatusColor(null);
+  }
+
 }
 
 Color _estatusColor(String? estatus) {
   switch (estatus) {
     case 'Liberado':
-      return const Color(0xFF2E7D32); // green
+      return const Color(0xFF2E9E44); // green
     case 'No liberado':
-      return const Color(0xFFC62828); // red
+      return const Color(0xFFD63A3A); // red
     default:
-      return const Color(0xFF757575); // gray
+      return const Color(0xFF6D6D6D); // gray
   }
+}
+
+class _PolylabelCell {
+  final double x;
+  final double y;
+  final double h;
+  final double d;
+
+  const _PolylabelCell(this.x, this.y, this.h, this.d);
+
+  double get max => d + h * math.sqrt2;
 }
 
 class _SavedPolygon {

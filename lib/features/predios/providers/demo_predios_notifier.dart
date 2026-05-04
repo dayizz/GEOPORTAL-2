@@ -1,9 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/predio.dart';
-import '../../auth/providers/demo_data.dart';
 
 class DemoPrediosNotifier extends StateNotifier<List<Predio>> {
-  DemoPrediosNotifier() : super(List<Predio>.from(demoPredios));
+  DemoPrediosNotifier() : super(const []);
 
   void updatePredio(Predio updated) {
     state = [

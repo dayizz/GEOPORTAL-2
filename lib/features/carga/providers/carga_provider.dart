@@ -113,12 +113,13 @@ class CargaNotifier extends StateNotifier<List<ImportedFile>> {
     int encontrados = 0,
     int creados = 0,
     int errores = 0,
+    int? rowCount,
   }) {
     final id = bdId ?? DateTime.now().millisecondsSinceEpoch.toString();
     final file = ImportedFile(
       id: id,
       name: name,
-      featureCount: features.length,
+      featureCount: rowCount ?? features.length,
       importedAt: DateTime.now(),
       features: features,
       bdId: bdId,
