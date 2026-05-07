@@ -101,24 +101,7 @@ class CargaNotifier extends StateNotifier<List<ImportedFile>> {
   /// Carga (o recarga) la lista desde BD.
   /// Los archivos que solo están en memoria (sin bdId) se conservan al final.
   void initFromBD(List<ImportedFile> bdFiles) {
-    // Archivos solo en memoria (importados en esta sesión pero no guardados en BD)
     final soloEnMemoria = state.where((f) => f.bdId == null).toList();
-    // IDs de BD que ya están en memoria (para evitar duplicados de sesión)
-    final bdIdsEnMemoria =
-        state.map((f) => f.bdId).whereType<String>().toSet();
-    // Archivos de BD que aún no están en la lista (en caso de recarga parcial)
-    final nuevosDeDB =
-        bdFiles.where((f) => !bdIdsEnMemoria.contains(f.bdId)).toList();
-    // Archivos de BD ya en memoria: actualizamos su metadata
-    final actualizados = state.map((f) {
-      if (f.bdId == null) return f;
-      final bdMatch = bdFiles.cast<ImportedFile?>().firstWhere(
-            (b) => b?.bdId == f.bdId,
-            orElse: () => null,
-          );
-      return bdMatch ?? f;
-    }).toList();
-    // Lista final: BD completa + archivos solo en memoria
     final bdIds = bdFiles.map((f) => f.bdId).whereType<String>().toSet();
     final memoriaExtra = soloEnMemoria.where((f) => !bdIds.contains(f.bdId)).toList();
     state = [...bdFiles, ...memoriaExtra];

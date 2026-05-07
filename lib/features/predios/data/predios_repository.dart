@@ -150,7 +150,7 @@ class PrediosRepository {
   }) async {
     // Si hay ApiClient, usar backend FastAPI
     if (_apiClient != null) {
-      final data = await _apiClient!.getPredios();
+      final data = await _apiClient.getPredios();
       return data.map((e) => Predio.fromMap(e as Map<String, dynamic>)).toList();
     }
     // ...existing code...
@@ -190,7 +190,7 @@ class PrediosRepository {
     // Si hay ApiClient, usar backend FastAPI
     if (_apiClient != null) {
       try {
-        final data = await _apiClient!.getPredio(id);
+        final data = await _apiClient.getPredio(id);
         return Predio.fromMap(data);
       } catch (_) {
         return null;
@@ -226,7 +226,7 @@ class PrediosRepository {
   /// directamente en las properties del feature GeoJSON.
   Future<Map<String, dynamic>?> buscarPorClaveCatastral(String clave) async {
     if (_apiClient != null) {
-      return _apiClient!.getPredioByClaveCatastral(clave);
+      return _apiClient.getPredioByClaveCatastral(clave);
     }
     if (_usingSheets) {
       final rows = await _sheets!.getRows(sheet: 'predios');
@@ -258,7 +258,7 @@ class PrediosRepository {
 
   Future<Predio> createPredio(Map<String, dynamic> data) async {
     if (_apiClient != null) {
-      final saved = await _apiClient!.createPredio(data);
+      final saved = await _apiClient.createPredio(data);
       return Predio.fromMap(saved);
     }
     if (_usingSheets) {
@@ -291,7 +291,7 @@ class PrediosRepository {
 
   Future<Predio> updatePredio(String id, Map<String, dynamic> data) async {
     if (_apiClient != null) {
-      final saved = await _apiClient!.updatePredio(id, data);
+      final saved = await _apiClient.updatePredio(id, data);
       return Predio.fromMap(saved);
     }
     if (_usingSheets) {
@@ -326,7 +326,7 @@ class PrediosRepository {
 
   Future<void> deletePredio(String id) async {
     if (_apiClient != null) {
-      await _apiClient!.deletePredio(id);
+      await _apiClient.deletePredio(id);
       return;
     }
     if (_usingSheets) {
@@ -356,7 +356,7 @@ class PrediosRepository {
 
   Future<Map<String, dynamic>> getEstadisticas() async {
     if (_apiClient != null) {
-      return _apiClient!.getEstadisticas();
+      return _apiClient.getEstadisticas();
     }
     if (_usingSheets) {
       final predios = await getPredios(limit: 100000);
@@ -422,7 +422,7 @@ class PrediosRepository {
     };
 
     if (_apiClient != null) {
-      final saved = await _apiClient!.updatePredio(idGestion, payload);
+      final saved = await _apiClient.updatePredio(idGestion, payload);
       return Predio.fromMap(saved);
     }
 

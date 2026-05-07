@@ -48,10 +48,6 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
     return 'Sin proyecto';
   }
 
-  int _conteoProyecto(List<Predio> predios, String proyecto) {
-    return predios.where((predio) => _predioProyecto(predio) == proyecto).length;
-  }
-
   Map<String, int> _groupCountBy<T>(Iterable<Predio> predios, T Function(Predio) selector) {
     final result = <String, int>{};
     for (final predio in predios) {

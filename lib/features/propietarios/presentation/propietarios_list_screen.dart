@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/propietarios_provider.dart';
 import '../../../features/predios/models/propietario.dart';
-import '../data/propietarios_repository.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_strings.dart';
 import '../../../shared/widgets/app_scaffold.dart';

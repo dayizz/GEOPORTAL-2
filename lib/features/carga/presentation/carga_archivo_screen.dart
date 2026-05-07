@@ -15,7 +15,6 @@ import '../../predios/models/predio.dart';
 import '../../predios/models/propietario.dart';
 import '../../propietarios/providers/propietarios_provider.dart';
 import '../../propietarios/providers/local_propietarios_provider.dart';
-import '../data/archivos_geojson_repository.dart';
 import '../data/local_archivos_repository.dart';
 import '../providers/carga_provider.dart';
 import '../services/geojson_background_parser.dart';
@@ -927,7 +926,6 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   @override
   Widget build(BuildContext context) {
     final progresoImportacion = ref.watch(importacionProgresoProvider);
-    final porcentajeSync = progresoImportacion.porcentaje;
     final isBusy = _loading || _sincronizando;
 
     return AppScaffold(

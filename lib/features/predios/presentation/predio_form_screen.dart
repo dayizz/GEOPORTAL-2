@@ -7,7 +7,6 @@ import '../providers/predios_provider.dart';
 import '../providers/demo_predios_notifier.dart';
 import '../providers/local_predios_provider.dart';
 import '../data/predios_repository.dart';
-import '../models/predio.dart';
 import '../../auth/providers/demo_provider.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_strings.dart';

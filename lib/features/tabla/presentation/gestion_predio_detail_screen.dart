@@ -346,39 +346,6 @@ class GestionPredioDetailScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildEtapaRow(String label, bool completado) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Icon(
-            completado ? Icons.check_circle : Icons.radio_button_unchecked,
-            color: completado ? AppColors.secondary : Colors.grey.shade400,
-            size: 20,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: completado ? AppColors.textPrimary : AppColors.textSecondary,
-                fontWeight: completado ? FontWeight.w500 : FontWeight.normal,
-              ),
-            ),
-          ),
-          Text(
-            completado ? 'Completado' : 'Pendiente',
-            style: TextStyle(
-              fontSize: 11,
-              color: completado ? AppColors.secondary : AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSection(
     BuildContext context,
     String title,

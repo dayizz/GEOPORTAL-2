@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import '../providers/predios_provider.dart';
 import '../../../core/constants/app_colors.dart';
 import '../models/predio.dart';
-import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_strings.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 

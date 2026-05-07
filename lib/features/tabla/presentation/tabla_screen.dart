@@ -13,7 +13,6 @@ import '../../predios/providers/local_predios_provider.dart';
 import '../../predios/providers/predios_provider.dart';
 import '../../propietarios/providers/local_propietarios_provider.dart';
 import '../../propietarios/providers/propietarios_provider.dart';
-import '../../../shared/services/backend_service.dart';
 
 class TablaScreen extends ConsumerStatefulWidget {
   const TablaScreen({super.key});
@@ -48,7 +47,6 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
   int _currentPage = 0;
 
   int get _startRow => _currentPage * _rowsPerPage;
-  int get _endRow => _startRow + _rowsPerPage;
   void _goToPage(int page, int totalRows) {
     final maxPage = (totalRows / _rowsPerPage).ceil() - 1;
     setState(() {
@@ -215,7 +213,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
       // Si no hay datos, mostrar mensaje amigable y evitar errores
       final remoteData = prediosAsync.asData?.value;
       final prediosList = remoteData ?? _ultimosPredios;
-      if (prediosList == null || prediosList.isEmpty) {
+      if (prediosList.isEmpty) {
         content = Column(
           children: [
             _buildTopBar(0, const []),
@@ -651,14 +649,6 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
       return legacy;
     }
     return null;
-  }
-
-  String _pdfLabel(Predio predio) {
-    final url = _pdfUrlFor(predio);
-    if (url == null) return '-';
-    final uri = Uri.tryParse(url);
-    if (uri == null || uri.pathSegments.isEmpty) return 'PDF vinculado';
-    return uri.pathSegments.last;
   }
 
   String _copFechaLabel(Predio predio) {
