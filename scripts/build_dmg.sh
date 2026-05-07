@@ -42,6 +42,10 @@ if [ ! -d "${APP_PATH}" ]; then
 fi
 echo "    OK: $(du -sh "${APP_PATH}" | cut -f1)"
 
+echo "==> Firmando .app (ad-hoc)..."
+codesign --force --deep --sign - "${APP_PATH}"
+codesign --verify --deep --strict "${APP_PATH}" && echo "    Firma ad-hoc verificada"
+
 echo "==> Creando DMG..."
 mkdir -p "${DIST_DIR}"
 hdiutil create \
