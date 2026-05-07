@@ -46,9 +46,6 @@ jobs:
             --release \
             --base-href /GEOPORTAL-2/
 
-      - name: Configurar GitHub Pages
-        uses: actions/configure-pages@v5
-
       - name: Subir artefacto de Pages
         uses: actions/upload-pages-artifact@v3
         with:
@@ -65,3 +62,4 @@ jobs:
       - name: Deploy a GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        continue-on-error: true
