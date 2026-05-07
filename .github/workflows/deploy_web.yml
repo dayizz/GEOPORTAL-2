@@ -37,6 +37,11 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      - name: Preparar directorio build (eliminar symlink de iCloud workaround)
+        run: |
+          if [ -L build ]; then rm build; fi
+          mkdir -p build
+
       - name: Flutter analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
         continue-on-error: true
