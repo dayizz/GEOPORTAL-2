@@ -512,4 +512,6 @@ Cada fase tiene su propio documento en la carpeta `docs/`:
 | 1 | [docs/IMPL_01_desktop_fase1_build_macos.md](docs/IMPL_01_desktop_fase1_build_macos.md) | ✅ Completado |
 | 2 | [docs/IMPL_02_desktop_fase2_apis_web_especificas.md](docs/IMPL_02_desktop_fase2_apis_web_especificas.md) | ✅ Completado |
 | 3 | [docs/IMPL_03_desktop_fase3_path_provider.md](docs/IMPL_03_desktop_fase3_path_provider.md) | ✅ Completado |
+| 4 | [docs/IMPL_04_desktop_fase4_ux_escritorio.md](docs/IMPL_04_desktop_fase4_ux_escritorio.md) | ✅ Completado |
+| 5 | [docs/IMPL_05_desktop_fase5_empaquetado_dmg.md](docs/IMPL_05_desktop_fase5_empaquetado_dmg.md) | ✅ Completado |
 
