@@ -218,3 +218,436 @@ Este proyecto implementa un geoportal operativo para gestión de predios:
 4. Diagnóstico de importación
 - La pantalla de carga puede exportar reporte de errores de sincronización en `JSON` y `CSV`.
 - El reporte toma las features con `_syncStatus = error` y los mensajes de error acumulados del proceso.
+
+---
+
+## 10. Implementación: Flutter Web → Aplicación de Escritorio (macOS)
+
+### Objetivo
+
+Convertir el geoportal de una aplicación web (Flutter Web) a una **aplicación nativa de escritorio para macOS**, conservando toda la funcionalidad existente y adaptando la experiencia de usuario a entorno de escritorio.
+
+---
+
+### Diagnóstico de compatibilidad actual
+
+El código base es **~85 % compatible** con macOS sin cambios. Los problemas identificados son puntuales y están en 3 archivos.
+
+| Código / paquete | Problema | Impacto |
+|---|---|---|
+| `launchUrl(..., webOnlyWindowName: '_blank')` | Parámetro exclusivo de web | Build falla en macOS |
+| `Share.shareXFiles(...)` | Funciona en macOS (panel nativo) | Sin cambio |
+| `FilePicker.pickFiles(withData: true)` | En web devuelve bytes en memoria; en desktop devuelve path | Leer bytes con `dart:io` desde el path |
+| `shared_preferences` | En web → localStorage; en macOS → NSUserDefaults | Funciona sin cambios |
+| `CodeSign failed` (build actual) | Atributos extendidos de macOS en carpeta `build/` | Limpiar con `xattr` y agregar entitlements |
+
+---
+
+### Fases de implementación
+
+---
+
+#### Fase 1 — Arreglar el build de macOS
+**Duración estimada: 30 minutos**
+**Riesgo: Bajo**
+
+El único error de build actual es una falla de firma de código causada por atributos extendidos (`resource fork / Finder detritus`) en el directorio `build/macos/`.
+
+**Pasos:**
+
+1. Limpiar atributos extendidos:
+   ```bash
+   xattr -cr build/macos
+   flutter build macos
+   ```
+
+2. Agregar entitlements de red y archivos en `macos/Runner/DebugProfile.entitlements` y `macos/Runner/Release.entitlements`:
+   ```xml
+   <!-- Red (para mapas, Supabase, HTTP) -->
+   <key>com.apple.security.network.client</key>
+   <true/>
+   <!-- Acceso a archivos seleccionados por el usuario (FilePicker) -->
+   <key>com.apple.security.files.user-selected.read-only</key>
+   <true/>
+   ```
+
+3. Verificar que el app abre correctamente con `flutter run -d macos`.
+
+**Archivos a modificar:**
+- `macos/Runner/DebugProfile.entitlements`
+- `macos/Runner/Release.entitlements`
+
+---
+
+#### Fase 2 — Adaptar APIs web-específicas
+**Duración estimada: 1–2 horas**
+**Riesgo: Bajo**
+
+Hay 3 usos de APIs que tienen comportamiento diferente en web vs desktop.
+
+**2.1 — `webOnlyWindowName` en `launchUrl`**
+
+Archivos afectados:
+- `lib/features/predios/presentation/predio_form_screen.dart` (línea 154)
+- `lib/features/tabla/presentation/tabla_screen.dart` (línea 665)
+
+Cambio:
+```dart
+// ANTES (web)
+await launchUrl(uri, webOnlyWindowName: '_blank');
+
+// DESPUÉS (multiplataforma)
+await launchUrl(uri, mode: LaunchMode.externalApplication);
+```
+
+**2.2 — `FilePicker` con lectura de bytes**
+
+En web, `pickFiles(withData: true)` devuelve los bytes directamente en `result.files.first.bytes`.
+En macOS, devuelve el path en `result.files.first.path` y los bytes se leen con `dart:io`.
+
+Archivos afectados:
+- `lib/features/carga/presentation/carga_archivo_screen.dart` (línea 98)
+- `lib/features/tabla/presentation/tabla_screen.dart` (línea 678)
+
+Patrón de solución:
+```dart
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+Uint8List bytes;
+if (kIsWeb) {
+  bytes = result.files.first.bytes!;
+} else {
+  bytes = await File(result.files.first.path!).readAsBytes();
+}
+```
+
+**2.3 — `Share.shareXFiles` (sin cambio)**
+
+`share_plus` en macOS muestra el panel nativo de compartir del sistema operativo. No requiere modificación.
+
+---
+
+#### Fase 3 — Persistencia en escritorio
+**Duración estimada: 30 minutos**
+**Riesgo: Bajo**
+
+| Dato | Web | macOS |
+|---|---|---|
+| Archivos importados (metadata) | `shared_preferences` → localStorage | `shared_preferences` → NSUserDefaults ✅ |
+| Predios locales | `shared_preferences` | `shared_preferences` ✅ |
+| GeoJSON completo (archivos grandes) | Limitado a ~5 MB en localStorage | Guardar en `Documents/` con `path_provider` + `dart:io` |
+
+Para soportar archivos grandes en desktop, `LocalArchivosRepository` puede extenderse con una segunda estrategia:
+
+```dart
+// En desktop: guardar features completas en archivo JSON en Documents/
+final dir = await getApplicationDocumentsDirectory();
+final file = File('${dir.path}/geoportal/archivo_$id.json');
+await file.writeAsString(jsonEncode(features));
+```
+
+**Paquete necesario (ya disponible):**
+- `path_provider` — solo se necesita re-agregar a `pubspec.yaml` para desktop.
+
+---
+
+#### Fase 4 — UX de escritorio (AppScaffold y navegación)
+**Duración estimada: 2–3 horas**
+**Riesgo: Medio**
+
+La navegación actual usa una **barra inferior** (`BottomNavigationBar`) optimizada para móvil/web. En escritorio la convención es un **panel lateral** permanente (sidebar).
+
+**4.1 — Rediseño de `AppScaffold`**
+
+`lib/shared/widgets/app_scaffold.dart` es el único punto de cambio para toda la navegación.
+
+Estrategia multiplataforma:
+```dart
+// Detectar si es escritorio
+final isDesktop = !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+
+if (isDesktop) {
+  // Sidebar: NavigationRail o Drawer permanente
+  return Scaffold(
+    body: Row(
+      children: [
+        NavigationRail(destinations: [...], selectedIndex: currentIndex, ...),
+        const VerticalDivider(width: 1),
+        Expanded(child: body),
+      ],
+    ),
+  );
+} else {
+  // Barra inferior (comportamiento actual)
+  return Scaffold(bottomNavigationBar: ..., body: body);
+}
+```
+
+**4.2 — Tamaño de ventana mínimo**
+
+Agregar `window_manager` para fijar tamaño mínimo y título de la ventana:
+
+```yaml
+# pubspec.yaml
+window_manager: ^0.4.0
+```
+
+```dart
+// main.dart
+import 'package:window_manager/window_manager.dart';
+
+await windowManager.ensureInitialized();
+windowManager.waitUntilReadyToShow(
+  const WindowOptions(
+    minimumSize: Size(1100, 700),
+    title: 'Geoportal LDDV',
+  ),
+  () async => await windowManager.show(),
+);
+```
+
+**4.3 — Scroll con rueda del mouse**
+
+En escritorio el scroll táctil no funciona. Agregar `ScrollConfiguration` global en `app.dart`:
+
+```dart
+ScrollConfiguration(
+  behavior: ScrollConfiguration.of(context).copyWith(
+    scrollbars: true,
+    dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch},
+  ),
+  child: MaterialApp.router(...),
+)
+```
+
+**4.4 — Densidad de UI**
+
+Agregar `visualDensity` compacta para escritorio en `AppTheme`:
+
+```dart
+ThemeData(
+  visualDensity: VisualDensity.adaptivePlatformDensity,
+  ...
+)
+```
+
+---
+
+#### Fase 5 — Empaquetado y distribución macOS
+**Duración estimada: 1 hora**
+**Riesgo: Bajo–Medio**
+
+| Opción | Descripción | Recomendado |
+|---|---|---|
+| `flutter build macos` | Genera `.app` en `build/macos/Build/Products/Release/` | ✅ Para uso interno |
+| DMG manual | Empaquetar el `.app` en un DMG con `hdiutil` | Para distribución |
+| Notarización Apple | Firma y envío a Apple para distribución fuera del App Store | Solo si se distribuye externamente |
+
+Para uso interno en el equipo, el `.app` generado directamente es suficiente. Se puede copiar a `/Applications` o distribuir por carpeta compartida.
+
+---
+
+### Resumen de esfuerzo
+
+| Fase | Tarea principal | Tiempo estimado | Riesgo |
+|---|---|---|---|
+| 1 | Arreglar build macOS (entitlements + xattr) | 30 min | Bajo |
+| 2 | Adaptar APIs web-específicas (3 puntos) | 1–2 h | Bajo |
+| 3 | Persistencia desktop (path_provider para archivos grandes) | 30 min | Bajo |
+| 4 | UX escritorio (sidebar, ventana, scroll) | 2–3 h | Medio |
+| 5 | Empaquetado `.app` / DMG | 1 h | Bajo |
+| **Total** | | **~5–7 horas** | **Bajo–Medio** |
+
+---
+
+### Orden de ejecución recomendado
+
+```
+Fase 1 → Fase 2 → build macos funcional ✓
+         ↓
+      Fase 3 → Fase 4 → Fase 5 → App lista para distribución
+```
+
+Se recomienda completar Fases 1 y 2 primero para tener la app corriendo en macOS y poder probar funcionalidad completa antes de invertir tiempo en el rediseño de UI.
+
+---
+
+### Cambios en `pubspec.yaml`
+
+```yaml
+# Agregar (para desktop):
+window_manager: ^0.4.0
+path_provider: ^2.1.5   # re-agregar, fue removido en limpieza web
+
+# Los demás paquetes ya son compatibles con macOS
+```
+
+---
+
+### Notas de compatibilidad de paquetes
+
+| Paquete | Web | macOS | Notas |
+|---|---|---|---|
+| `flutter_map` | ✅ | ✅ | Sin cambios |
+| `flutter_riverpod` | ✅ | ✅ | Sin cambios |
+| `go_router` | ✅ | ✅ | Sin cambios |
+| `shared_preferences` | ✅ | ✅ | NSUserDefaults en macOS |
+| `file_picker` | ✅ | ✅ | Leer bytes desde path en desktop |
+| `url_launcher` | ✅ | ✅ | Quitar `webOnlyWindowName` |
+| `share_plus` | ✅ | ✅ | Panel nativo macOS |
+| `fl_chart` | ✅ | ✅ | Sin cambios |
+| `supabase_flutter` | ✅ | ✅ | Sin cambios |
+| `http` | ✅ | ✅ | Requiere entitlement `network.client` |
+
+---
+
+## 11. Implementación Desktop — Fase 1: Fix build macOS
+
+**Estado:** ✅ Implementado  
+**Fecha:** 2026-05-07  
+**Rama:** `desktop/fase-1`
+
+---
+
+### Objetivo de la fase
+
+Lograr que `flutter build macos` y `flutter run -d macos` completen sin errores, con permisos suficientes para que la app acceda a la red (mapas, Supabase, HTTP) y al sistema de archivos del usuario (FilePicker).
+
+---
+
+### Diagnóstico previo
+
+El build fallaba con el error:
+
+```
+resource fork, Finder information, or similar detritus not allowed
+Command CodeSign failed with a nonzero exit code
+```
+
+**Causa raíz:** Xcode no puede firmar el bundle `.app` cuando algún archivo dentro de `build/macos/` tiene atributos extendidos de macOS (resource forks, datos de Finder, flags de cuarentena, etc.). Estos atributos los puede añadir el propio sistema de archivos, Time Machine, o descargas de Internet.
+
+Además, los entitlements de sandbox no incluían:
+- `network.client` → la app no podría hacer peticiones HTTP/HTTPS (mapas OSM, Supabase)
+- `files.user-selected.read-write` → FilePicker no podría abrir el panel de archivos del sistema
+
+---
+
+### Archivos modificados
+
+| Archivo | Tipo de cambio |
+|---|---|
+| `macos/Runner/DebugProfile.entitlements` | Agregar 2 entitlements (red + archivos) |
+| `macos/Runner/Release.entitlements` | Agregar 2 entitlements (red + archivos) |
+
+---
+
+### Cambios aplicados
+
+#### `macos/Runner/DebugProfile.entitlements`
+
+```xml
+<!-- ANTES -->
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+</dict>
+
+<!-- DESPUÉS -->
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+```
+
+#### `macos/Runner/Release.entitlements`
+
+```xml
+<!-- ANTES -->
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+</dict>
+
+<!-- DESPUÉS -->
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+```
+
+---
+
+### Entitlements explicados
+
+| Entitlement | Necesario para |
+|---|---|
+| `app-sandbox` | Requisito Apple — todos los apps macOS deben correr en sandbox |
+| `cs.allow-jit` | Motor Dart (debug) — permite compilación JIT en tiempo de ejecución |
+| `network.server` | Ya existía — permite abrir sockets de servidor (flutter run dev) |
+| `network.client` | **Nuevo** — permite hacer peticiones salientes HTTP/HTTPS: mapas OSM, Supabase, FastAPI backend |
+| `files.user-selected.read-write` | **Nuevo** — permite leer/escribir archivos que el usuario seleccione con FilePicker |
+
+---
+
+### Comando de build limpio
+
+Antes de cada build macOS tras cambios de Xcode/entitlements, limpiar atributos extendidos:
+
+```bash
+xattr -cr build/macos
+flutter build macos
+```
+
+O desde cero:
+
+```bash
+flutter clean
+flutter pub get
+flutter build macos
+```
+
+---
+
+### Criterio de éxito
+
+- `flutter build macos` termina con `✓ Built build/macos/Build/Products/Release/geoportal_predios.app`
+- La app abre sin crash
+- El mapa carga tiles de OpenStreetMap
+- FilePicker puede abrir el panel de selección de archivos
+- Las peticiones HTTP al backend FastAPI funcionan
+
+---
+
+### Resultado
+
+```
+✓ Built build/macos/Build/Products/Release/geoportal_predios.app (51.2 MB)
+```
+
+App abre correctamente en macOS. Fase 1 completada.
+
+---
+
+### Próximo paso
+
+**Fase 2** — Adaptar APIs web-específicas:
+- `webOnlyWindowName` en `launchUrl` → `LaunchMode.externalApplication`
+- `FilePicker` bytes en web vs path en desktop → guard con `kIsWeb`
+
