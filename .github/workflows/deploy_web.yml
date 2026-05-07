@@ -60,12 +60,8 @@ jobs:
   deploy:
     needs: build-web
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Deploy a GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-        continue-on-error: true
