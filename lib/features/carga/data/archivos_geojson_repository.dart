@@ -122,10 +122,12 @@ class ArchivosGeoJsonRepository {
     return (response as List).cast<Map<String, dynamic>>();
   }
 
-  /// Guarda un archivo GeoJSON en la BD. Devuelve el registro creado (con su UUID).
+  /// Guarda un archivo GeoJSON o XLSX en la BD. Devuelve el registro creado (con su UUID).
+  /// [rowCount] sobreescribe `features_count` cuando el archivo es XLSX (features vacías pero N filas).
   Future<Map<String, dynamic>> saveArchivo({
     required String nombre,
     required List<Map<String, dynamic>> features,
+    int? rowCount,
     bool sincronizado = false,
     int encontrados = 0,
     int creados = 0,
@@ -138,7 +140,7 @@ class ArchivosGeoJsonRepository {
       final row = <String, dynamic>{
         'id': _uuid.v4(),
         'nombre': nombre,
-        'features_count': features.length,
+        'features_count': rowCount ?? features.length,
         'features': storedFeatures,
         'features_stored': storedFeatures.length,
         'features_truncated': truncated,
@@ -161,7 +163,7 @@ class ArchivosGeoJsonRepository {
         .from('archivos_geojson')
         .insert({
           'nombre': nombre,
-          'features_count': features.length,
+          'features_count': rowCount ?? features.length,
           'features': features,
           'sincronizado': sincronizado,
           'encontrados': encontrados,

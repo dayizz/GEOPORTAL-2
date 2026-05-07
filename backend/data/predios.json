@@ -1,63 +1,9 @@
 [
   {
-    "clave_catastral": "PRUEBA_AEROPUERTO_1-0002",
-    "tramo": "T1",
-    "tipo_propiedad": "PRIVADA",
-    "uso_suelo": "Otro",
-    "valor_catastral": 0,
-    "propietario_nombre": "21",
-    "superficie": 0,
-    "km_inicio": 0,
-    "km_fin": 0,
-    "km_lineales": 0,
-    "km_efectivos": 0,
-    "geometry": {
-      "type": "MultiPolygon",
-      "coordinates": [
-        [
-          [
-            [
-              494012.7521334698,
-              2146549.004631752,
-              0
-            ],
-            [
-              492390.15429958777,
-              2146767.1482338263,
-              0
-            ],
-            [
-              492748.9874283365,
-              2147292.340984816,
-              0
-            ],
-            [
-              494111.07326726476,
-              2147366.299102023,
-              0
-            ],
-            [
-              494012.7521334698,
-              2146549.004631752,
-              0
-            ]
-          ]
-        ]
-      ]
-    },
-    "poligono_insertado": true,
-    "cop": false,
-    "identificacion": false,
-    "levantamiento": false,
-    "negociacion": false,
-    "id": "841f535b-afb6-4e90-89d9-8772faa8029f",
-    "created_at": "2026-05-01T01:06:37.860841+00:00",
-    "updated_at": "2026-05-01T01:06:37.860841+00:00"
-  },
-  {
     "clave_catastral": "PRUEBA_AEROPUERTO_1-0001",
     "tramo": "T1",
     "tipo_propiedad": "PRIVADA",
+    "proyecto": "TSNL",
     "uso_suelo": "Otro",
     "valor_catastral": 0,
     "propietario_nombre": "29",
@@ -146,18 +92,21 @@
       ]
     },
     "poligono_insertado": true,
-    "cop": true,
+    "cop": false,
     "identificacion": false,
     "levantamiento": false,
     "negociacion": false,
-    "id": "f2c144fe-ad94-4d39-9e71-c44b28bf4fb4",
-    "created_at": "2026-05-04T16:51:12.749150+00:00",
-    "updated_at": "2026-05-04T16:52:42.586147+00:00"
+    "id": "39aeb7a0-7a58-4319-881c-7eeed5642a2b",
+    "pdf_url": null,
+    "cop_fecha": null,
+    "created_at": "2026-05-06T22:05:21.956678+00:00",
+    "updated_at": "2026-05-06T22:05:21.956678+00:00"
   },
   {
     "clave_catastral": "PRUEBA_AEROPUERTO_1-0003",
     "tramo": "T1",
     "tipo_propiedad": "PRIVADA",
+    "proyecto": "TSNL",
     "uso_suelo": "Otro",
     "valor_catastral": 0,
     "propietario_nombre": "Dayana Vela",
@@ -221,12 +170,14 @@
       ]
     },
     "poligono_insertado": true,
-    "cop": true,
+    "cop": false,
     "identificacion": false,
     "levantamiento": false,
     "negociacion": false,
-    "id": "9eced6dd-a21d-49d9-a1e9-724e25aa2344",
-    "created_at": "2026-05-04T16:51:12.787473+00:00",
-    "updated_at": "2026-05-04T16:52:41.472850+00:00"
+    "id": "4322520b-1239-4dfb-a196-4d93c363ec88",
+    "pdf_url": null,
+    "cop_fecha": null,
+    "created_at": "2026-05-06T22:05:21.975211+00:00",
+    "updated_at": "2026-05-06T22:05:21.975211+00:00"
   }
 ]

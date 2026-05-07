@@ -16,6 +16,7 @@ import '../../predios/models/propietario.dart';
 import '../../propietarios/providers/propietarios_provider.dart';
 import '../../propietarios/providers/local_propietarios_provider.dart';
 import '../data/archivos_geojson_repository.dart';
+import '../data/local_archivos_repository.dart';
 import '../providers/carga_provider.dart';
 import '../services/geojson_background_parser.dart';
 import '../services/sincronizacion_service.dart';
@@ -32,8 +33,6 @@ class CargaArchivoScreen extends ConsumerStatefulWidget {
 class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   bool _loading = false;
   bool _sincronizando = false;
-  String? _mensaje;
-  bool _exito = false;
   List<Map<String, dynamic>> _preview = [];
   PlatformFile? _archivoSeleccionado;
   Map<String, dynamic>? _geoJsonData;
@@ -43,20 +42,56 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   Map<String, int> _camposDetectados = {};
   int _totalFeatures = 0;
 
+  void _mostrarSnackBar(String mensaje, {bool exito = true}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensaje),
+        backgroundColor: exito ? null : AppColors.danger,
+        duration: Duration(seconds: exito ? 5 : 8),
+      ),
+    );
+  }
+
+  bool _yaCargoDesdeDB = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargarArchivosDesdeBD());
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_yaCargoDesdeDB) {
+      // Se carga una vez por instancia del widget; initState ya lo dispara.
+      return;
+    }
+    // Si el widget ya existía (volvimos a esta pantalla), recargamos desde BD.
+    _cargarArchivosDesdeBD();
+  }
+
   Future<void> _cargarArchivosDesdeBD() async {
     try {
-      final repo = ref.read(archivosGeoJsonRepositoryProvider);
+      final repo = ref.read(localArchivosRepositoryProvider);
       final rawList = await repo.getArchivos();
-      final bdFiles = rawList.map(ImportedFile.fromBD).toList();
+      final bdFiles = rawList
+          .map((m) {
+            try {
+              return ImportedFile.fromBD(m);
+            } catch (_) {
+              return null;
+            }
+          })
+          .whereType<ImportedFile>()
+          .toList();
+      if (!mounted) return;
       ref.read(cargaProvider.notifier).initFromBD(bdFiles);
-    } catch (_) {
-      // Si la BD no está disponible, se muestran solo los archivos en memoria.
+      _yaCargoDesdeDB = true;
+    } catch (e) {
+      // ignore: avoid_print
+      debugPrint('Error cargando archivos desde Firestore: $e');
     }
   }
 
@@ -95,7 +130,6 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       _syncResultado = null;
       _camposDetectados = {};
       _totalFeatures = 0;
-      _mensaje = null;
       _loading = true;
     });
 
@@ -111,10 +145,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
       if (bytes == null) {
         if (!mounted) return;
-        setState(() {
-          _mensaje = 'No se pudo leer el archivo seleccionado.';
-          _exito = false;
-        });
+        _mostrarSnackBar('No se pudo leer el archivo seleccionado.', exito: false);
         return;
       }
 
@@ -140,17 +171,12 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         _camposDetectados = {};
         _totalFeatures = 0;
         _xlsxParseResult = parseResult;
-        _mensaje =
-            '${parseResult.totalRows} filas detectadas en ${parseResult.hojas.length} hoja(s) compatibles.';
-        _exito = true;
       });
+      _mostrarSnackBar('${parseResult.totalRows} filas detectadas en ${parseResult.hojas.length} hoja(s) compatibles.');
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _xlsxParseResult = null;
-        _mensaje = 'No se pudo leer el XLSX: $e';
-        _exito = false;
-      });
+      setState(() => _xlsxParseResult = null);
+      _mostrarSnackBar('No se pudo leer el XLSX: $e', exito: false);
     }
   }
 
@@ -170,15 +196,11 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         _preview = parseResult.preview;
         _totalFeatures = parseResult.totalFeatures;
         _camposDetectados = parseResult.camposDetectados;
-        _mensaje = '${parseResult.totalFeatures} features encontrados';
-        _exito = true;
       });
+      _mostrarSnackBar('${parseResult.totalFeatures} features encontrados');
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _mensaje = 'Error al leer el archivo: $e';
-        _exito = false;
-      });
+      _mostrarSnackBar('Error al leer el archivo: $e', exito: false);
     }
   }
 
@@ -203,11 +225,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     final nombre = _archivoSeleccionado?.name ??
         'archivo_${DateTime.now().millisecondsSinceEpoch}';
 
-    setState(() {
-      _sincronizando = true;
-      _mensaje = 'Sincronizando con la base de datos…';
-      _exito = true;
-    });
+    setState(() => _sincronizando = true);
     ref.read(importacionAsyncProvider.notifier).iniciar(
       total: features.length,
       etapa: 'Sincronizando',
@@ -231,7 +249,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       // Guardar archivo en la BD
       String? bdId;
         try {
-          final archivosRepo = ref.read(archivosGeoJsonRepositoryProvider);
+          final archivosRepo = ref.read(localArchivosRepositoryProvider);
           final saved = await archivosRepo.saveArchivo(
             nombre: nombre,
             features: resultado.features,
@@ -248,23 +266,19 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       setState(() {
         _syncResultado = resultado;
         _sincronizando = false;
-        if (resultado.errores == 0) {
-          _mensaje = 'Guardado. ${resultado.creados} nuevos'
-              '${resultado.encontrados > 0 ? ', ${resultado.encontrados} existentes actualizados' : ''}';
-          _exito = true;
-        } else if (resultado.creados > 0) {
-          _mensaje = '${resultado.creados} guardados, ${resultado.errores} con error.\n'
-              '${resultado.mensajesError.isNotEmpty ? resultado.mensajesError.first : ""}';
-          _exito = false;
-        } else {
-          // Todos fallaron — mostrar el primer error para diagnóstico
-          final detalle = resultado.mensajesError.isNotEmpty
-              ? resultado.mensajesError.first
-              : 'Verifica que la migración SQL (sección 9 del supabase_schema.sql) haya sido ejecutada en Supabase.';
-          _mensaje = 'No se pudo registrar en Gestión.\n$detalle';
-          _exito = false;
-        }
       });
+      if (resultado.errores > 0 && resultado.creados == 0 && resultado.encontrados == 0) {
+        final detalle = resultado.mensajesError.isNotEmpty
+            ? resultado.mensajesError.first
+            : 'Verifica que la migración SQL (sección 9 del supabase_schema.sql) haya sido ejecutada en Supabase.';
+        _mostrarSnackBar('No se pudo registrar en Gestión.\n$detalle', exito: false);
+      } else if (resultado.errores > 0) {
+        _mostrarSnackBar(
+          '${resultado.creados} guardados, ${resultado.errores} con error.\n'
+          '${resultado.mensajesError.isNotEmpty ? resultado.mensajesError.first : ""}',
+          exito: false,
+        );
+      }
 
       // Fallback local: si no se pudo persistir en BD, registrar en Gestión local.
       final totalGestion = resultado.creados + resultado.encontrados;
@@ -287,11 +301,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
           etapa: 'Completado',
         );
         if (mounted) {
-          setState(() {
-            _mensaje =
-                'BD no disponible. $insertadosLocales predio(s) registrados en Gestión local.';
-            _exito = true;
-          });
+          _mostrarSnackBar('BD no disponible. $insertadosLocales predio(s) registrados en Gestión local.');
           context.go('/tabla');
         }
       }
@@ -370,12 +380,11 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
           mensaje: e.toString(),
         );
       }
-      setState(() {
-        _sincronizando = false;
-        _mensaje =
-            'Error de BD: $e\n$insertadosLocales predio(s) registrados en Gestión local.';
-        _exito = insertadosLocales > 0;
-      });
+      setState(() => _sincronizando = false);
+      _mostrarSnackBar(
+        'Error de BD: $e\n$insertadosLocales predio(s) registrados en Gestión local.',
+        exito: insertadosLocales > 0,
+      );
       if (insertadosLocales > 0) {
         context.go('/tabla');
       }
@@ -395,12 +404,20 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     ref.read(cargaProvider.notifier).removeFile(file.id);
     if (file.guardadoEnBD && file.bdId != null) {
       try {
-        final repo = ref.read(archivosGeoJsonRepositoryProvider);
+        final repo = ref.read(localArchivosRepositoryProvider);
         await repo.deleteArchivo(file.bdId!);
       } catch (_) {
         // Error silencioso: el archivo ya fue quitado de la UI.
       }
     }
+  }
+
+  Future<void> _eliminarTodos(List<ImportedFile> files) async {
+    ref.read(cargaProvider.notifier).clearAll();
+    try {
+      final repo = ref.read(localArchivosRepositoryProvider);
+      await repo.deleteAll();
+    } catch (_) {}
   }
 
   Future<void> _inyectarXlsxEnTablas() async {
@@ -412,11 +429,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       return;
     }
 
-    setState(() {
-      _sincronizando = true;
-      _mensaje = 'Inyectando datos XLSX en tablas…';
-      _exito = true;
-    });
+    setState(() => _sincronizando = true);
 
     try {
       final service = ref.read(xlsxImportServiceProvider);
@@ -427,20 +440,44 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       ref.invalidate(propietariosListProvider);
 
       if (!mounted) return;
-      setState(() {
-        _sincronizando = false;
-        _mensaje =
-            'Inyección completada: ${resultado.procesados} fila(s), ${resultado.creados} creada(s), '
-            '${resultado.actualizados} actualizada(s), ${resultado.errores} error(es).';
-        _exito = resultado.errores == 0;
-      });
+      setState(() => _sincronizando = false);
+      if (resultado.errores == 0) {
+        _mostrarSnackBar(
+          'Inyección completada: ${resultado.procesados} fila(s), ${resultado.creados} creada(s), '
+          '${resultado.actualizados} actualizada(s).',
+        );
+      } else {
+        _mostrarSnackBar(
+          resultado.mensajes.isNotEmpty
+              ? resultado.mensajes.first
+              : 'Algunas filas no pudieron inyectarse (${resultado.errores} error(es)).',
+          exito: false,
+        );
+      }
 
-      // Registrar en la lista de archivos importados
+      // Persistir el archivo XLSX en la BD y registrarlo en la lista
       if (_archivoSeleccionado != null) {
+        String? bdId;
+        try {
+          final archivosRepo = ref.read(localArchivosRepositoryProvider);
+          final saved = await archivosRepo.saveArchivo(
+            nombre: _archivoSeleccionado!.name,
+            features: const [],
+            rowCount: resultado.procesados,
+            sincronizado: true,
+            encontrados: resultado.actualizados,
+            creados: resultado.creados,
+            errores: resultado.errores,
+          );
+          bdId = saved['id'] as String?;
+        } catch (_) {
+          // Si falla el guardado del archivo, continuar igualmente.
+        }
         ref.read(cargaProvider.notifier).addFile(
           _archivoSeleccionado!.name,
           const [],
-          guardadoEnBD: SupabaseConfig.isConfigured,
+          bdId: bdId,
+          guardadoEnBD: bdId != null,
           sincronizado: true,
           creados: resultado.creados,
           encontrados: resultado.actualizados,
@@ -450,16 +487,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       }
 
       if (resultado.errores > 0 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              resultado.mensajes.isNotEmpty
-                  ? resultado.mensajes.first
-                  : 'Algunas filas no pudieron inyectarse.',
-            ),
-            backgroundColor: AppColors.danger,
-          ),
-        );
+        // error SnackBar already shown above
       }
 
       if (mounted) {
@@ -467,22 +495,18 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _sincronizando = false;
-        _mensaje = !SupabaseConfig.isConfigured
+      setState(() => _sincronizando = false);
+      _mostrarSnackBar(
+        !SupabaseConfig.isConfigured
             ? 'Supabase no está configurado. Reemplaza la URL y la anon key reales en lib/core/supabase/supabase_config.dart antes de inyectar el XLSX.'
-            : 'Error al inyectar XLSX: $e';
-        _exito = false;
-      });
+            : 'Error al inyectar XLSX: $e',
+        exito: false,
+      );
     }
   }
 
   Future<void> _inyectarXlsxLocal(XlsxParseResult parseResult) async {
-    setState(() {
-      _sincronizando = true;
-      _mensaje = 'Inyectando datos XLSX en modo local…';
-      _exito = true;
-    });
+    setState(() => _sincronizando = true);
 
     var procesados = 0;
     var creados = 0;
@@ -637,19 +661,43 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
           proyectoDetectado ?? 'TQI';
 
       if (!mounted) return;
-      setState(() {
-        _sincronizando = false;
-        _mensaje =
-            'Inyección local completada: $procesados fila(s), $creados creada(s), $actualizados actualizada(s), $errores error(es).';
-        _exito = errores == 0;
-      });
+      setState(() => _sincronizando = false);
+      if (errores == 0) {
+        _mostrarSnackBar(
+          'Inyección local completada: $procesados fila(s), $creados creada(s), $actualizados actualizada(s).',
+        );
+      } else {
+        _mostrarSnackBar(
+          mensajes.isNotEmpty
+              ? mensajes.first
+              : 'Algunas filas no pudieron inyectarse en modo local ($errores error(es)).',
+          exito: false,
+        );
+      }
 
       // Registrar en la lista de archivos importados
       if (_archivoSeleccionado != null) {
+        String? bdId;
+        try {
+          final archivosRepo = ref.read(localArchivosRepositoryProvider);
+          final saved = await archivosRepo.saveArchivo(
+            nombre: _archivoSeleccionado!.name,
+            features: const [],
+            rowCount: procesados,
+            sincronizado: true,
+            encontrados: actualizados,
+            creados: creados,
+            errores: errores,
+          );
+          bdId = saved['id'] as String?;
+        } catch (_) {
+          // En modo local sin BD/Sheets, continuar sin persistir el registro.
+        }
         ref.read(cargaProvider.notifier).addFile(
           _archivoSeleccionado!.name,
           const [],
-          guardadoEnBD: false,
+          bdId: bdId,
+          guardadoEnBD: bdId != null,
           sincronizado: true,
           creados: creados,
           encontrados: actualizados,
@@ -659,16 +707,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       }
 
       if (errores > 0 && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              mensajes.isNotEmpty
-                  ? mensajes.first
-                  : 'Algunas filas no pudieron inyectarse en modo local.',
-            ),
-            backgroundColor: AppColors.danger,
-          ),
-        );
+        // error SnackBar already shown above
       }
 
       if (mounted) {
@@ -676,11 +715,8 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _sincronizando = false;
-        _mensaje = 'Error al inyectar XLSX en modo local: $e';
-        _exito = false;
-      });
+      setState(() => _sincronizando = false);
+      _mostrarSnackBar('Error al inyectar XLSX en modo local: $e', exito: false);
     }
   }
 
@@ -985,64 +1021,25 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
               ),
             ),
 
-            // Eliminado: indicador de progreso redundante
-
-            if (_mensaje != null) ...[
+            if ((_syncResultado?.errores ?? 0) > 0 ||
+                (_syncResultado?.mensajesError.isNotEmpty ?? false)) ...[
               const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: _exito
-                      ? AppColors.secondary.withValues(alpha: 0.08)
-                      : AppColors.danger.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: _exito
-                        ? AppColors.secondary.withValues(alpha: 0.4)
-                        : AppColors.danger.withValues(alpha: 0.4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _exportarReporteErrores(asCsv: false),
+                    icon: const Icon(Icons.data_object_outlined, size: 18),
+                    label: const Text('Exportar errores JSON'),
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      _exito ? Icons.check_circle : Icons.error,
-                      color: _exito ? AppColors.secondary : AppColors.danger,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _mensaje!,
-                        style: TextStyle(
-                          color: _exito ? AppColors.secondary : AppColors.danger,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                  OutlinedButton.icon(
+                    onPressed: () => _exportarReporteErrores(asCsv: true),
+                    icon: const Icon(Icons.table_view_outlined, size: 18),
+                    label: const Text('Exportar errores CSV'),
+                  ),
+                ],
               ),
-
-              if ((_syncResultado?.errores ?? 0) > 0 ||
-                  (_syncResultado?.mensajesError.isNotEmpty ?? false)) ...[
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () => _exportarReporteErrores(asCsv: false),
-                      icon: const Icon(Icons.data_object_outlined, size: 18),
-                      label: const Text('Exportar errores JSON'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _exportarReporteErrores(asCsv: true),
-                      icon: const Icon(Icons.table_view_outlined, size: 18),
-                      label: const Text('Exportar errores CSV'),
-                    ),
-                  ],
-                ),
-              ],
             ],
 
             // Vista previa
@@ -1339,6 +1336,35 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                         Text(
                           'Archivos importados (${importedFiles.length})',
                           style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        TextButton.icon(
+                          onPressed: () => showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Eliminar todos'),
+                              content: const Text(
+                                '¿Eliminar todos los archivos importados? Se borrarán también de la base de datos.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx),
+                                  child: const Text('Cancelar'),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.pop(ctx);
+                                    _eliminarTodos(importedFiles);
+                                  },
+                                  child: const Text('Eliminar todos',
+                                      style: TextStyle(color: AppColors.danger)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          icon: const Icon(Icons.delete_sweep_outlined, size: 16, color: AppColors.danger),
+                          label: const Text('Eliminar todos', style: TextStyle(fontSize: 12, color: AppColors.danger)),
+                          style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                         ),
                       ],
                     ),

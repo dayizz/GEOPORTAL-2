@@ -34,6 +34,7 @@ class AppScaffold extends StatelessWidget {
       return Scaffold(
         appBar: AppBar(title: Text(title), actions: actions),
         body: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             NavigationRail(
               selectedIndex: currentIndex,

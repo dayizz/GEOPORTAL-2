@@ -160,6 +160,25 @@ class SincronizacionService {
     return null;
   }
 
+  String? _resolveProyecto(Map<String, dynamic> props) {
+    final detectado = GeoJsonMapper.detectarProyecto(props);
+    if (detectado != null) return detectado;
+
+    final fromClave = GeoJsonMapper.inferProyectoDesdeClave(_extractId(props));
+    if (fromClave != null) return fromClave;
+
+    return _pick(props, [
+      'proyecto',
+      'PROYECTO',
+      'nombre_proyecto',
+      'NOMBRE_PROYECTO',
+      'tramo_proyecto',
+      'TRAMO_PROYECTO',
+      'obra',
+      'OBRA',
+    ]);
+  }
+
   String? _pickPropietarioFlexible(Map<String, dynamic> props) {
     final directo = _pick(props, [
       'propietario_nombre', 'PROPIETARIO_NOMBRE',
@@ -323,10 +342,7 @@ class SincronizacionService {
         'ejido', 'nom_ejido', 'nombre_ejido', 'NOM_EJIDO', 'EJIDO',
         'comunidad', 'localidad',
       ]),
-      'proyecto': _pick(props, [
-        'proyecto', 'PROYECTO', 'nombre_proyecto', 'tramo_proyecto',
-        'obra', 'OBRA',
-      ]),
+      'proyecto': _resolveProyecto(props),
       'uso_suelo': _pick(props, [
             'uso_suelo', 'USO_SUELO', 'uso', 'USO', 'land_use', 'LAND_USE',
           ]) ??
@@ -450,7 +466,7 @@ class SincronizacionService {
     trySet('tramo',      _pick(props, ['tramo', 'TRAMO', 'tramo_vial', 'seccion', 'SECCION']));
     trySet('tipo_propiedad', _pick(props, ['tipo_propiedad', 'TIPO_PROPIEDAD', 'tipo', 'TIPO', 'regimen', 'REGIMEN']));
     trySet('ejido',      _pick(props, ['ejido', 'EJIDO', 'nom_ejido', 'NOM_EJIDO', 'comunidad', 'localidad']));
-    trySet('proyecto',   _pick(props, ['proyecto', 'PROYECTO', 'nombre_proyecto', 'tramo_proyecto', 'obra', 'OBRA']));
+    trySet('proyecto',   _resolveProyecto(props));
     trySet('propietario_nombre', _pick(props, [
       'propietario', 'PROPIETARIO', 'propietario_nombre', 'nombre_propietario',
       'nom_propietario', 'NOM_PROPIETARIO', 'titular', 'TITULAR', 'dueno', 'nombre',
@@ -746,6 +762,7 @@ class SincronizacionService {
           'clave_catastral': clave,
           'tramo': 'T1',
           'tipo_propiedad': 'PRIVADA',
+          if (_resolveProyecto(props) != null) 'proyecto': _resolveProyecto(props),
           if (geometry != null) 'geometry': geometry,
           if (geometry != null) 'poligono_insertado': true,
           'cop': false,

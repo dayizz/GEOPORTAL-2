@@ -83,9 +83,17 @@ final propietariosListProvider = FutureProvider<List<Propietario>>((ref) async {
 
 String _extractProyectoFromPredio(Predio predio) {
   final proyectoDirecto = predio.proyecto?.trim().toUpperCase();
-  if (proyectoDirecto != null && proyectoDirecto.isNotEmpty) {
+  const proyectos = ['TQI', 'TSNL', 'TAP', 'TQM'];
+  if (proyectoDirecto != null && proyectos.contains(proyectoDirecto)) {
     return proyectoDirecto;
   }
+
+  final clave = predio.claveCatastral.trim().toUpperCase();
+  final compact = clave.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+  if (compact.startsWith('TQI') || compact.startsWith('QI')) return 'TQI';
+  if (compact.startsWith('TSNL') || compact.startsWith('SNL') || compact.startsWith('SL')) return 'TSNL';
+  if (compact.startsWith('TAP') || compact.startsWith('AP')) return 'TAP';
+  if (compact.startsWith('TQM') || compact.startsWith('QM')) return 'TQM';
 
   final contenido = [
     predio.claveCatastral,
@@ -95,7 +103,6 @@ String _extractProyectoFromPredio(Predio predio) {
     predio.copFirmado ?? '',
   ].join(' ').toUpperCase();
 
-  const proyectos = ['TQI', 'TSNL', 'TAP', 'TQM'];
   for (final proyecto in proyectos) {
     if (contenido.contains(proyecto)) return proyecto;
   }

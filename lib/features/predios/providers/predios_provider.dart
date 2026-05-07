@@ -118,6 +118,7 @@ String _extractProjectoFromPredio(Predio predio) {
     predio.ejido ?? '',
     predio.poligonoDwg ?? '',
     predio.oficio ?? '',
+    predio.pdfUrl ?? '',
     predio.copFirmado ?? '',
   ].join(' ').toUpperCase();
 

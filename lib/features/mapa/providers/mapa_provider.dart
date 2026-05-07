@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum MapaBaseLayer {
@@ -65,12 +67,50 @@ class ImportacionUiState {
 }
 
 class ImportacionAsyncNotifier extends AsyncNotifier<ImportacionUiState> {
+	Timer? _autoResetTimer;
+	Timer? _processingWatchdog;
+
+	static const Duration _autoResetDelay = Duration(seconds: 5);
+	static const Duration _processingWatchdogDelay = Duration(seconds: 45);
+
+	void _cancelTimers() {
+		_autoResetTimer?.cancel();
+		_autoResetTimer = null;
+		_processingWatchdog?.cancel();
+		_processingWatchdog = null;
+	}
+
+	void _armProcessingWatchdog() {
+		_processingWatchdog?.cancel();
+		_processingWatchdog = Timer(_processingWatchdogDelay, () {
+			final current = state.valueOrNull;
+			if (current?.estado == ImportacionEstado.procesando) {
+				reset();
+			}
+		});
+	}
+
+	void _scheduleAutoReset() {
+		_autoResetTimer?.cancel();
+		_autoResetTimer = Timer(_autoResetDelay, () {
+			final current = state.valueOrNull;
+			if (current == null) return;
+			if (current.estado == ImportacionEstado.completado ||
+					current.estado == ImportacionEstado.error) {
+				reset();
+			}
+		});
+	}
+
 	@override
 	Future<ImportacionUiState> build() async {
+		ref.onDispose(_cancelTimers);
 		return const ImportacionUiState.idle();
 	}
 
 	void iniciar({required int total, String etapa = 'Sincronizando'}) {
+		_autoResetTimer?.cancel();
+		_armProcessingWatchdog();
 		state = AsyncData(
 			ImportacionUiState(
 				estado: ImportacionEstado.procesando,
@@ -88,6 +128,8 @@ class ImportacionAsyncNotifier extends AsyncNotifier<ImportacionUiState> {
 		required int total,
 		String etapa = 'Sincronizando',
 	}) {
+		_autoResetTimer?.cancel();
+		_armProcessingWatchdog();
 		final current = state.valueOrNull ?? const ImportacionUiState.idle();
 		state = AsyncData(
 			current.copyWith(
@@ -103,6 +145,7 @@ class ImportacionAsyncNotifier extends AsyncNotifier<ImportacionUiState> {
 	}
 
 	void completar({required int total, String etapa = 'Completado'}) {
+		_processingWatchdog?.cancel();
 		final current = state.valueOrNull ?? const ImportacionUiState.idle();
 		state = AsyncData(
 			current.copyWith(
@@ -115,6 +158,7 @@ class ImportacionAsyncNotifier extends AsyncNotifier<ImportacionUiState> {
 				clearError: true,
 			),
 		);
+		_scheduleAutoReset();
 	}
 
 	void fallar({
@@ -123,6 +167,7 @@ class ImportacionAsyncNotifier extends AsyncNotifier<ImportacionUiState> {
 		String etapa = 'Error',
 		String? mensaje,
 	}) {
+		_processingWatchdog?.cancel();
 		final current = state.valueOrNull ?? const ImportacionUiState.idle();
 		state = AsyncData(
 			current.copyWith(
@@ -135,9 +180,11 @@ class ImportacionAsyncNotifier extends AsyncNotifier<ImportacionUiState> {
 				error: mensaje,
 			),
 		);
+		_scheduleAutoReset();
 	}
 
 	void reset() {
+		_cancelTimers();
 		state = const AsyncData(ImportacionUiState.idle());
 	}
 }

@@ -83,6 +83,8 @@ class PrediosRepository {
       'superficie': _toDouble(raw['superficie']) ?? 0,
       'cop': _toBool(raw['cop']),
       'cop_firmado': raw['cop_firmado']?.toString(),
+      'pdf_url': raw['pdf_url']?.toString() ?? raw['cop_firmado']?.toString(),
+      'cop_fecha': raw['cop_fecha']?.toString(),
       'poligono_dwg': raw['poligono_dwg']?.toString(),
       'oficio': raw['oficio']?.toString(),
       'proyecto': raw['proyecto']?.toString(),
@@ -482,17 +484,27 @@ class PrediosRepository {
     }
   }
 
-  Future<String> uploadArchivo(String filePath, Uint8List bytes, String extension) async {
+  Future<String> uploadPredioPdf({
+    required String predioId,
+    required Uint8List bytes,
+    required String extension,
+  }) async {
     if (_usingSheets) {
       final fileName = '${DateTime.now().millisecondsSinceEpoch}.$extension';
       return fileName;
     }
 
-    final fileName = '${DateTime.now().millisecondsSinceEpoch}.$extension';
+    final normalizedExtension = extension.toLowerCase();
+    final fileName = 'cop-dot-${DateTime.now().millisecondsSinceEpoch}.$normalizedExtension';
+    final path = 'predios/$predioId/$fileName';
     await _client.storage.from('predios-archivos').uploadBinary(
-          'uploads/$fileName',
+          path,
           bytes,
+          fileOptions: const FileOptions(
+            upsert: true,
+            contentType: 'application/pdf',
+          ),
         );
-    return fileName;
+    return _client.storage.from('predios-archivos').getPublicUrl(path);
   }
 }

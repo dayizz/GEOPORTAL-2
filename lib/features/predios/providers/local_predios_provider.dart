@@ -78,6 +78,8 @@ class LocalPrediosNotifier extends StateNotifier<List<Predio>> {
         ejido: _normalizeOptionalText(predio.ejido),
         proyecto: _normalizeProyecto(predio.proyecto),
         copFirmado: _normalizeOptionalText(predio.copFirmado),
+        pdfUrl: _normalizeOptionalText(predio.pdfUrl),
+        copFecha: predio.copFecha,
         poligonoDwg: _normalizeOptionalText(predio.poligonoDwg),
         oficio: _normalizeOptionalText(predio.oficio),
         updatedAt: now,
@@ -333,6 +335,8 @@ class LocalPrediosNotifier extends StateNotifier<List<Predio>> {
       superficie: incoming.superficie ?? existing.superficie,
       cop: existing.cop || incoming.cop,
       copFirmado: _preferNullableText(existing.copFirmado, incoming.copFirmado),
+      pdfUrl: _preferNullableText(existing.pdfUrl, incoming.pdfUrl),
+      copFecha: incoming.copFecha ?? existing.copFecha,
       poligonoDwg: _preferNullableText(existing.poligonoDwg, incoming.poligonoDwg),
       oficio: _preferNullableText(existing.oficio, incoming.oficio),
       proyecto: _preferNullableText(existing.proyecto, incoming.proyecto),
@@ -507,6 +511,8 @@ class LocalPrediosNotifier extends StateNotifier<List<Predio>> {
         a.ejido == b.ejido &&
         a.proyecto == b.proyecto &&
         a.copFirmado == b.copFirmado &&
+          a.pdfUrl == b.pdfUrl &&
+          a.copFecha == b.copFecha &&
         a.poligonoDwg == b.poligonoDwg &&
         a.oficio == b.oficio;
   }

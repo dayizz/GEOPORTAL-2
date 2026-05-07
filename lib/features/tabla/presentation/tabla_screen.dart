@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../mapa/providers/mapa_provider.dart';
@@ -27,6 +29,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
   final _searchCtrl = TextEditingController();
   final _verticalScroll = ScrollController();
   final Map<String, Predio> _prediosOptimistas = {};
+  final Set<String> _uploadingPdfIds = <String>{};
   List<Predio> _ultimosPredios = const [];
 
   String _proyectoActual = 'TQI';
@@ -153,15 +156,23 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
 
   String _predioProyecto(Predio predio) {
     final proyectoDirecto = predio.proyecto?.trim().toUpperCase();
-    if (proyectoDirecto != null && proyectoDirecto.isNotEmpty) {
+    if (proyectoDirecto != null && _proyectos.contains(proyectoDirecto)) {
       return proyectoDirecto;
     }
+
+    final clave = predio.claveCatastral.trim().toUpperCase();
+    final compact = clave.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    if (compact.startsWith('TQI') || compact.startsWith('QI')) return 'TQI';
+    if (compact.startsWith('TSNL') || compact.startsWith('SNL') || compact.startsWith('SL')) return 'TSNL';
+    if (compact.startsWith('TAP') || compact.startsWith('AP')) return 'TAP';
+    if (compact.startsWith('TQM') || compact.startsWith('QM')) return 'TQM';
 
     final contenido = [
       predio.claveCatastral,
       predio.ejido ?? '',
       predio.poligonoDwg ?? '',
       predio.oficio ?? '',
+      predio.pdfUrl ?? '',
       predio.copFirmado ?? '',
     ].join(' ').toUpperCase();
 
@@ -169,7 +180,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
       if (contenido.contains(proyecto)) return proyecto;
     }
 
-    return 'TQI';
+    return 'Sin proyecto';
   }
 
   int _conteoProyecto(List<Predio> predios, String proyecto) {
@@ -431,7 +442,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
                     Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: Chip(
-                        label: Text('Tramo: $_filtroTramo'),
+                        label: Text('T/F/S: $_filtroTramo'),
                         onDeleted: () => setState(() => _filtroTramo = null),
                         deleteIcon: const Icon(Icons.close, size: 14),
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -503,11 +514,11 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
 
     const rawWidths = <double>[
        44, // ACCIONES
-       40, // VER MAPA
-      180, // PROPIETARIO
-      110, // ID SEDATU
-       50, // TRAMO
+       55, // VER MAPA
+      180, // CLAVE
+      50, // T/F/S
        90, // TIPO
+      130, // ESTADO / MUNICIPIO
       120, // EJIDO
        72, // KM INICIO
        72, // KM FIN
@@ -515,20 +526,20 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
        72, // KM EF
        80, // M²
        46, // COP
-      90, // ESTATUS
-      130, // COP FIRMADO
+      92, // FECHA
+       90, // ESTATUS
       130, // OFICIO
-       54, // POL. INS
        54, // IDENT.
        54, // LEVANT.
        54, // NEGOC.
+      130, // SIT. SOCIAL
     ];
 
     const headers = <String>[
-      '', 'MAPA', 'PROPIETARIO', 'ID SEDATU', 'TRAMO', 'TIPO', 'EJIDO',
+      '', 'MAPA', 'CLAVE', 'T/F/S', 'TIPO', 'ESTADO /\nMUNICIPIO', 'EJIDO',
       'KM INICIO', 'KM FIN', 'KM LIN', 'KM EF', 'M²',
-      'C.O.P', 'ESTATUS', 'COP FIRMADO', 'OFICIO',
-      'POL.\nINS.', 'IDENT.', 'LEVANT.', 'NEGOC.',
+      'COP/DOT', 'FECHA', 'ESTATUS', 'OFICIO',
+      'IDENT.', 'LEVANT.', 'NEGOC.', 'SITUACION SOCIAL',
     ];
 
     return LayoutBuilder(
@@ -631,9 +642,120 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     }
   }
 
+  String? _pdfUrlFor(Predio predio) {
+    final pdfUrl = predio.pdfUrl?.trim();
+    if (pdfUrl != null && pdfUrl.isNotEmpty) return pdfUrl;
+
+    final legacy = predio.copFirmado?.trim();
+    if (legacy != null && legacy.isNotEmpty && legacy.startsWith('http')) {
+      return legacy;
+    }
+    return null;
+  }
+
+  String _pdfLabel(Predio predio) {
+    final url = _pdfUrlFor(predio);
+    if (url == null) return '-';
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.pathSegments.isEmpty) return 'PDF vinculado';
+    return uri.pathSegments.last;
+  }
+
+  String _copFechaLabel(Predio predio) {
+    final fecha = predio.copFecha;
+    if (fecha == null) return '-';
+    return DateFormat('dd/MM/yyyy').format(fecha);
+  }
+
+  Future<void> _openPdfUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      throw Exception('La URL del PDF es invalida.');
+    }
+    final opened = await launchUrl(uri, webOnlyWindowName: '_blank');
+    if (!opened) {
+      throw Exception('No se pudo abrir el PDF.');
+    }
+  }
+
+  Future<void> _handleCopPdfTap(Predio predio) async {
+    final existingUrl = _pdfUrlFor(predio);
+    if (existingUrl != null) {
+      await _openPdfUrl(existingUrl);
+      return;
+    }
+
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['pdf'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+
+    final file = picked.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudieron leer los bytes del PDF seleccionado.'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _uploadingPdfIds.add(predio.id));
+    try {
+      final extension = (file.extension?.isNotEmpty ?? false)
+          ? file.extension!
+          : 'pdf';
+      final url = await ref.read(prediosRepositoryProvider).uploadPredioPdf(
+            predioId: predio.id,
+            bytes: bytes,
+            extension: extension,
+          );
+      await _savePredio(
+        predio,
+        predio.copyWith(
+          pdfUrl: url,
+          copFirmado: url,
+          copFecha: DateTime.now(),
+          updatedAt: DateTime.now(),
+        ),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PDF vinculado correctamente.'),
+            backgroundColor: AppColors.secondary,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingPdfIds.remove(predio.id));
+      }
+    }
+  }
+
   Widget _buildDataRow(Predio p, List<double> widths, int idx) {
     final isEven = idx % 2 == 0;
     final tipoColor = AppColors.tipoPropiedadColor(p.tipoPropiedad);
+    final estadoMunicipio = [
+      if (p.estado != null && p.estado!.isNotEmpty) p.estado!,
+      if (p.municipio != null && p.municipio!.isNotEmpty) p.municipio!,
+    ].join(' / ');
 
     return Container(
       height: 38,
@@ -647,16 +769,16 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           _actionCell(p, widths[0]),
           // VER EN MAPA
           _mapCell(p, widths[1]),
-          // PROPIETARIO
-          _dataCell(p.propietarioNombre ?? p.claveCatastral, widths[2],
+          // CLAVE
+          _dataCell(p.claveCatastral, widths[2],
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
               color: tipoColor.withValues(alpha: 0.08)),
-          // ID SEDATU
-          _dataCell(p.claveCatastral, widths[3],
-              style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
-          // TRAMO
-          _tramoBadgeCell(p.tramo, widths[4]),
+          // T/F/S
+          _tramoBadgeCell(p.tramo, widths[3]),
           // TIPO
-          _tipoBadgeCell(p.tipoPropiedad, tipoColor, widths[5]),
+          _tipoBadgeCell(p.tipoPropiedad, tipoColor, widths[4]),
+          // ESTADO / MUNICIPIO
+          _dataCell(estadoMunicipio.isEmpty ? '-' : estadoMunicipio, widths[5]),
           // EJIDO
           _dataCell(p.ejido ?? '-', widths[6]),
           // KM INICIO
@@ -669,36 +791,17 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           _numCell(p.kmEfectivos, widths[10], decimals: 4),
           // M²
           _numCell(p.superficie, widths[11], decimals: 2),
-          // COP (tappable toggle)
-          _tappableBoolCell(
-            p.cop, widths[12],
-            trueColor: AppColors.secondary,
-            falseColor: Colors.grey.shade400,
-            onTap: () => _savePredio(
-              p,
-              p.copyWith(cop: !p.cop, updatedAt: DateTime.now()),
-            ),
-          ),
+          // COP/DOT PDF (icono de estado)
+          _copPdfIndicatorCell(p, widths[12]),
+          // FECHA COP/DOT
+          _dataCell(_copFechaLabel(p), widths[13]),
           // ESTATUS
-          _estatusCell(p, widths[13]),
-          // COP FIRMADO
-          _dataCell(p.copFirmado ?? '-', widths[14]),
+          _estatusCell(p, widths[14]),
           // OFICIO
           _dataCell(p.oficio ?? '-', widths[15]),
-          // POLÍGONO INSERTADO (tappable)
-          _tappableBoolCell(
-            p.poligonoInsertado, widths[16],
-            onTap: () => _savePredio(
-              p,
-              p.copyWith(
-                poligonoInsertado: !p.poligonoInsertado,
-                updatedAt: DateTime.now(),
-              ),
-            ),
-          ),
           // IDENTIFICACION (tappable)
           _tappableBoolCell(
-            p.identificacion, widths[17],
+            p.identificacion, widths[16],
             onTap: () => _savePredio(
               p,
               p.copyWith(
@@ -709,7 +812,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           ),
           // LEVANTAMIENTO (tappable)
           _tappableBoolCell(
-            p.levantamiento, widths[18],
+            p.levantamiento, widths[17],
             onTap: () => _savePredio(
               p,
               p.copyWith(
@@ -720,7 +823,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           ),
           // NEGOCIACION (tappable)
           _tappableBoolCell(
-            p.negociacion, widths[19],
+            p.negociacion, widths[18],
             onTap: () => _savePredio(
               p,
               p.copyWith(
@@ -729,6 +832,8 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
               ),
             ),
           ),
+          // SITUACION SOCIAL
+          _dataCell(p.situacionSocial ?? '-', widths[19]),
         ],
       ),
     );
@@ -872,6 +977,43 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     );
   }
 
+  Widget _copPdfIndicatorCell(Predio predio, double width) {
+    final hasPdf = _pdfUrlFor(predio) != null;
+    final uploading = _uploadingPdfIds.contains(predio.id);
+    final iconColor = hasPdf ? AppColors.secondary : Colors.grey.shade400;
+    final tooltip = uploading
+        ? 'Subiendo PDF...'
+        : hasPdf
+            ? 'Abrir PDF vinculado'
+            : 'Subir PDF';
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: uploading ? null : () => _handleCopPdfTap(predio),
+        child: Container(
+          width: width,
+          height: double.infinity,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+          ),
+          child: uploading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(
+                  Icons.description,
+                  size: 18,
+                  color: iconColor,
+                ),
+        ),
+      ),
+    );
+  }
+
   Widget _tramoBadgeCell(String tramo, double width) {
     const colors = {
       'T1': Color(0xFF3498DB),
@@ -962,11 +1104,15 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
                 ],
               ),
               const Divider(),
-              Text('Tramo', style: Theme.of(ctx).textTheme.labelLarge),
+              Text('T/F/S', style: Theme.of(ctx).textTheme.labelLarge),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
-                children: ['T1', 'T2', 'T3', 'T4'].map((t) => FilterChip(
+                children: [
+                  'T1', 'T2', 'T3', 'T4', 'T5',
+                  'F1', 'F2', 'F3', 'F4', 'F5',
+                  'S1', 'S2', 'S3', 'S4', 'S5',
+                ].map((t) => FilterChip(
                   label: Text(t),
                   selected: tramo == t,
                   onSelected: (v) => setS(() => tramo = v ? t : null),

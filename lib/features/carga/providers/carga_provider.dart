@@ -69,19 +69,24 @@ class ImportedFile {
           }).toList()
         : <Map<String, dynamic>>[];
 
-    final uuid = map['id'] as String;
+    final uuid = (map['id'] ?? '').toString();
+    final nombre = (map['nombre'] ?? 'archivo').toString();
+    final createdAtRaw = map['created_at'];
+    final importedAt = createdAtRaw is String
+        ? (DateTime.tryParse(createdAtRaw) ?? DateTime.now())
+        : DateTime.now();
     return ImportedFile(
-      id: uuid,
-      name: map['nombre'] as String,
-      featureCount: map['features_count'] as int? ?? features.length,
-      importedAt: DateTime.parse(map['created_at'] as String),
+      id: uuid.isEmpty ? DateTime.now().millisecondsSinceEpoch.toString() : uuid,
+      name: nombre,
+      featureCount: (map['features_count'] as num?)?.toInt() ?? features.length,
+      importedAt: importedAt,
       features: features,
-      bdId: uuid,
+      bdId: uuid.isEmpty ? null : uuid,
       guardadoEnBD: true,
-      sincronizado: map['sincronizado'] as bool? ?? false,
-      encontrados: map['encontrados'] as int? ?? 0,
-      creados: map['creados'] as int? ?? 0,
-      errores: map['errores'] as int? ?? 0,
+      sincronizado: map['sincronizado'] == true || map['sincronizado'] == 1,
+      encontrados: (map['encontrados'] as num?)?.toInt() ?? 0,
+      creados: (map['creados'] as num?)?.toInt() ?? 0,
+      errores: (map['errores'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -93,15 +98,30 @@ class ImportedFile {
 class CargaNotifier extends StateNotifier<List<ImportedFile>> {
   CargaNotifier() : super([]);
 
-  /// Inicializa con archivos cargados desde la BD (sin duplicar los que ya estén).
+  /// Carga (o recarga) la lista desde BD.
+  /// Los archivos que solo están en memoria (sin bdId) se conservan al final.
   void initFromBD(List<ImportedFile> bdFiles) {
-    final existingBdIds =
-        state.map((f) => f.bdId).where((id) => id != null).toSet();
-    final nuevos =
-        bdFiles.where((f) => !existingBdIds.contains(f.bdId)).toList();
-    if (nuevos.isNotEmpty) {
-      state = [...nuevos, ...state];
-    }
+    // Archivos solo en memoria (importados en esta sesión pero no guardados en BD)
+    final soloEnMemoria = state.where((f) => f.bdId == null).toList();
+    // IDs de BD que ya están en memoria (para evitar duplicados de sesión)
+    final bdIdsEnMemoria =
+        state.map((f) => f.bdId).whereType<String>().toSet();
+    // Archivos de BD que aún no están en la lista (en caso de recarga parcial)
+    final nuevosDeDB =
+        bdFiles.where((f) => !bdIdsEnMemoria.contains(f.bdId)).toList();
+    // Archivos de BD ya en memoria: actualizamos su metadata
+    final actualizados = state.map((f) {
+      if (f.bdId == null) return f;
+      final bdMatch = bdFiles.cast<ImportedFile?>().firstWhere(
+            (b) => b?.bdId == f.bdId,
+            orElse: () => null,
+          );
+      return bdMatch ?? f;
+    }).toList();
+    // Lista final: BD completa + archivos solo en memoria
+    final bdIds = bdFiles.map((f) => f.bdId).whereType<String>().toSet();
+    final memoriaExtra = soloEnMemoria.where((f) => !bdIds.contains(f.bdId)).toList();
+    state = [...bdFiles, ...memoriaExtra];
   }
 
   void addFile(

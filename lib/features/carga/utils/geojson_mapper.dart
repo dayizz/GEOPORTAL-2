@@ -133,6 +133,67 @@ class GeoJsonMapper {
   /// Proyectos conocidos para detección automática.
   static const _proyectosConocidos = ['TQI', 'TSNL', 'TAP', 'TQM'];
 
+  static String _normalizeKey(String input) {
+    var s = input.toLowerCase();
+    const replacements = {
+      'á': 'a',
+      'à': 'a',
+      'ä': 'a',
+      'â': 'a',
+      'é': 'e',
+      'è': 'e',
+      'ë': 'e',
+      'ê': 'e',
+      'í': 'i',
+      'ì': 'i',
+      'ï': 'i',
+      'î': 'i',
+      'ó': 'o',
+      'ò': 'o',
+      'ö': 'o',
+      'ô': 'o',
+      'ú': 'u',
+      'ù': 'u',
+      'ü': 'u',
+      'û': 'u',
+      'ñ': 'n',
+    };
+    replacements.forEach((k, v) => s = s.replaceAll(k, v));
+    return s.replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  static String? _inferProyectoDesdeTexto(String? value) {
+    if (value == null) return null;
+    final upper = _normalizeSpaces(value).toUpperCase();
+    if (upper.isEmpty) return null;
+
+    for (final code in _proyectosConocidos) {
+      final regex = RegExp('(^|[^A-Z0-9])' + code + r'([^A-Z0-9]|$)');
+      if (regex.hasMatch(upper) || upper.contains(code)) {
+        return code;
+      }
+    }
+
+    return null;
+  }
+
+  static String? inferProyectoDesdeClave(String? clave) {
+    if (clave == null) return null;
+    final upper = clave.trim().toUpperCase();
+    if (upper.isEmpty) return null;
+
+    final compact = upper.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+
+    if (compact.startsWith('TQI') || compact.startsWith('QI')) return 'TQI';
+    if (compact.startsWith('TSNL') || compact.startsWith('SNL') || compact.startsWith('SL')) {
+      return 'TSNL';
+    }
+    if (compact.startsWith('TAP') || compact.startsWith('AP')) return 'TAP';
+    if (compact.startsWith('TQM') || compact.startsWith('QM')) return 'TQM';
+
+    return null;
+  }
+
   /// Normaliza las claves del mapa [props] al esquema de Supabase.
   ///
   /// Las claves originales que no tienen alias conocido se preservan tal cual.
@@ -190,11 +251,9 @@ class GeoJsonMapper {
   }
 
   static String _normalizeProyecto(String value) {
-    final upper = value.toUpperCase();
-    for (final code in _proyectosConocidos) {
-      if (upper.contains(code)) return code;
-    }
-    return upper;
+    final inferred = _inferProyectoDesdeTexto(value);
+    if (inferred != null) return inferred;
+    return value.toUpperCase();
   }
 
   static String _normalizeTipoPropiedad(String value) {
@@ -208,18 +267,47 @@ class GeoJsonMapper {
   ///
   /// Busca en los campos más relevantes y en todos los valores como fallback.
   static String? detectarProyecto(Map<String, dynamic> props) {
-    // 1. Campo directo
-    final directo = props['proyecto']?.toString().trim().toUpperCase() ??
-        props['PROYECTO']?.toString().trim().toUpperCase();
-    if (directo != null && _proyectosConocidos.contains(directo)) return directo;
+    // 1. Campo directo / alias con nombre relacionado a proyecto
+    final candidatos = <String?>[
+      props['proyecto']?.toString(),
+      props['PROYECTO']?.toString(),
+      props['nombre_proyecto']?.toString(),
+      props['NOMBRE_PROYECTO']?.toString(),
+      props['tramo_proyecto']?.toString(),
+      props['TRAMO_PROYECTO']?.toString(),
+      props['obra']?.toString(),
+      props['OBRA']?.toString(),
+    ];
 
-    // 2. Buscar en todos los valores del mapa
+    for (final entry in props.entries) {
+      final key = _normalizeKey(entry.key);
+      final keyIsProjectLike = key.contains('proyecto') ||
+          key.contains('obra') ||
+          key.contains('tramoproyecto');
+      if (!keyIsProjectLike) continue;
+      candidatos.add(entry.value?.toString());
+    }
+
+    for (final candidate in candidatos) {
+      final inferred = _inferProyectoDesdeTexto(candidate);
+      if (inferred != null) return inferred;
+    }
+
+    // 2. Prefijo de clave catastral
+    final clave = props['clave_catastral']?.toString() ??
+        props['CLAVE_CATASTRAL']?.toString() ??
+        props['id_sedatu']?.toString() ??
+        props['ID_SEDATU']?.toString() ??
+        props['clave']?.toString() ??
+        props['CLAVE']?.toString();
+    final fromClave = inferProyectoDesdeClave(clave);
+    if (fromClave != null) return fromClave;
+
+    // 3. Buscar en todos los valores del mapa
     for (final value in props.values) {
       if (value == null) continue;
-      final upper = value.toString().toUpperCase();
-      for (final p in _proyectosConocidos) {
-        if (upper.contains(p)) return p;
-      }
+      final inferred = _inferProyectoDesdeTexto(value.toString());
+      if (inferred != null) return inferred;
     }
 
     return null;

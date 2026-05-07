@@ -1,4 +1,5 @@
 import json
+import re
 from json import JSONDecodeError, JSONDecoder
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,28 +96,64 @@ def _as_bool(value: Any) -> bool:
     return False
 
 
+def _infer_project_from_text(value: str | None) -> str | None:
+    text = str(value or "").strip().upper()
+    if not text:
+        return None
+
+    for code in PROJECT_CODES:
+        if re.search(rf"(^|[^A-Z0-9]){re.escape(code)}([^A-Z0-9]|$)", text):
+            return code
+        if code in text:
+            return code
+
+    return None
+
+
+def _infer_project_from_clave(value: str | None) -> str | None:
+    clave = str(value or "").strip().upper()
+    if not clave:
+        return None
+
+    compact = re.sub(r"[^A-Z0-9]", "", clave)
+
+    if compact.startswith(("TQI", "QI")):
+        return "TQI"
+    if compact.startswith(("TSNL", "SNL", "SL")):
+        return "TSNL"
+    if compact.startswith(("TAP", "AP")):
+        return "TAP"
+    if compact.startswith(("TQM", "QM")):
+        return "TQM"
+
+    return None
+
+
 def _infer_project(predio: dict[str, Any]) -> str | None:
-    explicit = str(predio.get("proyecto") or "").strip().upper()
-    if explicit in PROJECT_CODES:
+    explicit = _infer_project_from_text(str(predio.get("proyecto") or ""))
+    if explicit is not None:
         return explicit
 
     content = " ".join(
         [
+            str(predio.get("proyecto") or ""),
             str(predio.get("clave_catastral") or ""),
             str(predio.get("ejido") or ""),
             str(predio.get("poligono_dwg") or ""),
             str(predio.get("oficio") or ""),
+            str(predio.get("pdf_url") or ""),
             str(predio.get("cop_firmado") or ""),
         ]
     ).upper()
 
-    for code in PROJECT_CODES:
-        if code in content:
-            return code
+    from_content = _infer_project_from_text(content)
+    if from_content is not None:
+        return from_content
 
     clave = str(predio.get("clave_catastral") or "").strip().upper()
-    if clave.startswith("QI-"):
-        return "TQI"
+    from_clave = _infer_project_from_clave(clave)
+    if from_clave is not None:
+        return from_clave
 
     return None
 
@@ -135,6 +172,12 @@ def _normalize_predio(payload: dict[str, Any], existing: dict[str, Any] | None =
     ).strip()
     predio["tramo"] = predio.get("tramo") or "T1"
     predio["tipo_propiedad"] = predio.get("tipo_propiedad") or "PRIVADA"
+    pdf_url = str(predio.get("pdf_url") or predio.get("cop_firmado") or "").strip()
+    predio["pdf_url"] = pdf_url or None
+    cop_fecha = predio.get("cop_fecha")
+    predio["cop_fecha"] = str(cop_fecha).strip() if cop_fecha else None
+    if pdf_url and not str(predio.get("cop_firmado") or "").strip():
+        predio["cop_firmado"] = pdf_url
     predio["cop"] = _as_bool(predio.get("cop"))
     predio["identificacion"] = _as_bool(predio.get("identificacion"))
     predio["levantamiento"] = _as_bool(predio.get("levantamiento"))

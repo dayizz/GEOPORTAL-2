@@ -196,6 +196,20 @@ ALTER TABLE predios
   ADD COLUMN IF NOT EXISTS levantamiento      BOOLEAN     NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS negociacion        BOOLEAN     NOT NULL DEFAULT false;
 
+-- ============================================================
+-- 10b. MIGRACIÓN: Nuevos campos de localización y situación social
+-- ============================================================
+ALTER TABLE predios
+  ADD COLUMN IF NOT EXISTS estado             TEXT,
+  ADD COLUMN IF NOT EXISTS municipio          TEXT,
+  ADD COLUMN IF NOT EXISTS situacion_social   TEXT,
+  ADD COLUMN IF NOT EXISTS pdf_url            TEXT,
+  ADD COLUMN IF NOT EXISTS cop_fecha          TIMESTAMPTZ;
+
+-- Índice para búsqueda por estado/municipio
+CREATE INDEX IF NOT EXISTS idx_predios_estado     ON predios(estado);
+CREATE INDEX IF NOT EXISTS idx_predios_municipio  ON predios(municipio);
+
 -- Índices adicionales para búsqueda rápida por gestión
 CREATE INDEX IF NOT EXISTS idx_predios_tramo          ON predios(tramo);
 CREATE INDEX IF NOT EXISTS idx_predios_tipo_propiedad ON predios(tipo_propiedad);

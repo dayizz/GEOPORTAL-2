@@ -9,6 +9,8 @@ class Predio {
   final String tramo; // T1, T2, T3, T4
   final String tipoPropiedad; // SOCIAL, DOMINIO PLENO, PRIVADA
   final String? ejido;
+  final String? estado;
+  final String? municipio;
   final double? kmInicio;
   final double? kmFin;
   final double? kmLineales;
@@ -16,6 +18,8 @@ class Predio {
   final double? superficie; // M2
   final bool cop; // Convenio de Ocupación Previa
   final String? copFirmado; // Archivo PDF del COP firmado
+  final String? pdfUrl; // URL publica del PDF COP/DOT en storage
+  final DateTime? copFecha; // Fecha asociada al documento COP/DOT
   final String? poligonoDwg; // Archivo DWG del polígono
   final String? oficio; // Oficio entregado
   final String? proyecto;
@@ -23,6 +27,7 @@ class Predio {
   final bool identificacion;
   final bool levantamiento;
   final bool negociacion;
+  final String? situacionSocial;
   final double? latitud;
   final double? longitud;
   final Map<String, dynamic>? geometry;
@@ -43,6 +48,8 @@ class Predio {
     required this.tramo,
     required this.tipoPropiedad,
     this.ejido,
+    this.estado,
+    this.municipio,
     this.kmInicio,
     this.kmFin,
     this.kmLineales,
@@ -50,6 +57,8 @@ class Predio {
     this.superficie,
     this.cop = false,
     this.copFirmado,
+    this.pdfUrl,
+    this.copFecha,
     this.poligonoDwg,
     this.oficio,
     this.proyecto,
@@ -57,6 +66,7 @@ class Predio {
     this.identificacion = false,
     this.levantamiento = false,
     this.negociacion = false,
+    this.situacionSocial,
     this.latitud,
     this.longitud,
     this.geometry,
@@ -89,6 +99,8 @@ class Predio {
       tramo: map['tramo'] as String? ?? 'T1',
       tipoPropiedad: map['tipo_propiedad'] as String? ?? 'PRIVADA',
       ejido: map['ejido'] as String?,
+      estado: map['estado'] as String?,
+      municipio: map['municipio'] as String?,
       kmInicio: (map['km_inicio'] as num?)?.toDouble(),
       kmFin: (map['km_fin'] as num?)?.toDouble(),
       kmLineales: (map['km_lineales'] as num?)?.toDouble(),
@@ -96,6 +108,10 @@ class Predio {
       superficie: (map['superficie'] as num?)?.toDouble(),
       cop: map['cop'] as bool? ?? false,
       copFirmado: map['cop_firmado'] as String?,
+      pdfUrl: map['pdf_url'] as String? ?? map['cop_firmado'] as String?,
+        copFecha: map['cop_fecha'] != null
+          ? DateTime.tryParse(map['cop_fecha'] as String)
+          : null,
       poligonoDwg: map['poligono_dwg'] as String?,
       oficio: map['oficio'] as String?,
       proyecto: map['proyecto'] as String?,
@@ -103,6 +119,7 @@ class Predio {
       identificacion: map['identificacion'] as bool? ?? false,
       levantamiento: map['levantamiento'] as bool? ?? false,
       negociacion: map['negociacion'] as bool? ?? false,
+      situacionSocial: map['situacion_social'] as String?,
       latitud: (map['latitud'] as num?)?.toDouble(),
       longitud: (map['longitud'] as num?)?.toDouble(),
       geometry: geometry,
@@ -124,6 +141,8 @@ class Predio {
       'tramo': tramo,
       'tipo_propiedad': tipoPropiedad,
       'ejido': ejido,
+      'estado': estado,
+      'municipio': municipio,
       'km_inicio': kmInicio,
       'km_fin': kmFin,
       'km_lineales': kmLineales,
@@ -131,12 +150,15 @@ class Predio {
       'superficie': superficie,
       'cop': cop,
       'cop_firmado': copFirmado,
+      'pdf_url': pdfUrl,
+      'cop_fecha': copFecha?.toIso8601String(),
       'poligono_dwg': poligonoDwg,
       'oficio': oficio,
       'poligono_insertado': poligonoInsertado,
       'identificacion': identificacion,
       'levantamiento': levantamiento,
       'negociacion': negociacion,
+      'situacion_social': situacionSocial,
       'latitud': latitud,
       'longitud': longitud,
       'geometry': geometry,
@@ -166,6 +188,8 @@ class Predio {
     String? tramo,
     String? tipoPropiedad,
     String? ejido,
+    String? estado,
+    String? municipio,
     double? kmInicio,
     double? kmFin,
     double? kmLineales,
@@ -173,6 +197,8 @@ class Predio {
     double? superficie,
     bool? cop,
     String? copFirmado,
+    String? pdfUrl,
+    DateTime? copFecha,
     String? poligonoDwg,
     String? oficio,
     String? proyecto,
@@ -180,6 +206,7 @@ class Predio {
     bool? identificacion,
     bool? levantamiento,
     bool? negociacion,
+    String? situacionSocial,
     double? latitud,
     double? longitud,
     Map<String, dynamic>? geometry,
@@ -195,6 +222,8 @@ class Predio {
       tramo: tramo ?? this.tramo,
       tipoPropiedad: tipoPropiedad ?? this.tipoPropiedad,
       ejido: ejido ?? this.ejido,
+      estado: estado ?? this.estado,
+      municipio: municipio ?? this.municipio,
       kmInicio: kmInicio ?? this.kmInicio,
       kmFin: kmFin ?? this.kmFin,
       kmLineales: kmLineales ?? this.kmLineales,
@@ -202,6 +231,8 @@ class Predio {
       superficie: superficie ?? this.superficie,
       cop: cop ?? this.cop,
       copFirmado: copFirmado ?? this.copFirmado,
+      pdfUrl: pdfUrl ?? this.pdfUrl,
+      copFecha: copFecha ?? this.copFecha,
       poligonoDwg: poligonoDwg ?? this.poligonoDwg,
       oficio: oficio ?? this.oficio,
       proyecto: proyecto ?? this.proyecto,
@@ -209,6 +240,7 @@ class Predio {
       identificacion: identificacion ?? this.identificacion,
       levantamiento: levantamiento ?? this.levantamiento,
       negociacion: negociacion ?? this.negociacion,
+      situacionSocial: situacionSocial ?? this.situacionSocial,
       latitud: latitud ?? this.latitud,
       longitud: longitud ?? this.longitud,
       geometry: geometry ?? this.geometry,

@@ -16,10 +16,23 @@ class ReportesScreen extends ConsumerStatefulWidget {
 
 class _ReportesScreenState extends ConsumerState<ReportesScreen> {
   static const _proyectos = ['TQI', 'TSNL', 'TAP', 'TQM'];
+  static const _sparkMonths = 6;
 
   String _proyectoActual = 'TQI';
 
   String _predioProyecto(Predio predio) {
+    final proyectoDirecto = predio.proyecto?.trim().toUpperCase();
+    if (proyectoDirecto != null && _proyectos.contains(proyectoDirecto)) {
+      return proyectoDirecto;
+    }
+
+    final clave = predio.claveCatastral.trim().toUpperCase();
+    final compact = clave.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    if (compact.startsWith('TQI') || compact.startsWith('QI')) return 'TQI';
+    if (compact.startsWith('TSNL') || compact.startsWith('SNL') || compact.startsWith('SL')) return 'TSNL';
+    if (compact.startsWith('TAP') || compact.startsWith('AP')) return 'TAP';
+    if (compact.startsWith('TQM') || compact.startsWith('QM')) return 'TQM';
+
     final contenido = [
       predio.claveCatastral,
       predio.ejido ?? '',
@@ -32,7 +45,7 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
       if (contenido.contains(proyecto)) return proyecto;
     }
 
-    return 'TQI';
+    return 'Sin proyecto';
   }
 
   int _conteoProyecto(List<Predio> predios, String proyecto) {
@@ -46,6 +59,33 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
       result[key] = (result[key] ?? 0) + 1;
     }
     return result;
+  }
+
+  DateTime _monthKey(DateTime date) => DateTime(date.year, date.month);
+
+  List<double> _monthlySeries({
+    required List<Predio> predios,
+    required DateTime? Function(Predio) dateSelector,
+    required double Function(Predio) valueSelector,
+  }) {
+    final now = DateTime.now();
+    final months = List.generate(
+      _sparkMonths,
+      (i) => DateTime(now.year, now.month - (_sparkMonths - 1 - i)),
+    );
+    final monthValues = <DateTime, double>{
+      for (final month in months) _monthKey(month): 0,
+    };
+
+    for (final predio in predios) {
+      final date = dateSelector(predio);
+      if (date == null) continue;
+      final key = _monthKey(date);
+      if (!monthValues.containsKey(key)) continue;
+      monthValues[key] = (monthValues[key] ?? 0) + valueSelector(predio);
+    }
+
+    return months.map((month) => monthValues[_monthKey(month)] ?? 0).toList();
   }
 
   @override
@@ -84,18 +124,41 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
           final m2Total = proyectoPredios.fold<double>(0, (sum, predio) => sum + (predio.superficie ?? 0));
           final copFirmados = proyectoPredios.where((predio) => predio.cop).length;
           final ddvNecesario = m2Total;
-          final ddvAcreditado = proyectoPredios
+          final ddvAcreditadoTotal = proyectoPredios
               .where((predio) =>
                   predio.identificacion || predio.levantamiento || predio.negociacion || predio.cop)
               .fold<double>(0, (sum, predio) => sum + (predio.superficie ?? 0));
           final ddvLiberado = proyectoPredios
               .where((predio) => predio.cop)
               .fold<double>(0, (sum, predio) => sum + (predio.superficie ?? 0));
-          final ddvPendiente = (ddvNecesario - ddvLiberado).clamp(0.0, double.infinity);
+          final ddvAcreditadoNoLiberado = (ddvAcreditadoTotal - ddvLiberado).clamp(0.0, double.infinity);
+          final ddvPendiente = (ddvNecesario - ddvAcreditadoTotal).clamp(0.0, double.infinity);
+
+          final totalPrediosSeries = _monthlySeries(
+            predios: proyectoPredios,
+            dateSelector: (p) => p.createdAt,
+            valueSelector: (_) => 1,
+          );
+          final copFirmadosSeries = _monthlySeries(
+            predios: proyectoPredios.where((p) => p.cop).toList(),
+            dateSelector: (p) => p.copFecha ?? p.updatedAt ?? p.createdAt,
+            valueSelector: (_) => 1,
+          );
+          final m2TotalSeries = _monthlySeries(
+            predios: proyectoPredios,
+            dateSelector: (p) => p.createdAt,
+            valueSelector: (p) => p.superficie ?? 0,
+          );
+          final pendienteCopSeries = _monthlySeries(
+            predios: proyectoPredios.where((p) => !p.cop).toList(),
+            dateSelector: (p) => p.updatedAt ?? p.createdAt,
+            valueSelector: (_) => 1,
+          );
 
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.start,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Align(
@@ -133,42 +196,55 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
-                // KPIs principales
-                GridView.count(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: 1.55,
-                  children: [
-                    _buildKpiCard(context, 'Total Predios', fmtInt.format(total),
-                        Icons.terrain, AppColors.primary),
-                    _buildKpiCard(context, 'COP Firmados', fmtInt.format(copFirmados),
-                        Icons.check_circle_outline, AppColors.secondary),
-                    _buildKpiCard(context, 'M² DDV Total', '${fmtInt.format(m2Total)} m²',
-                        Icons.square_foot, AppColors.info),
-                    _buildKpiCard(
-                      context,
-                      'Pendiente COP',
-                      fmtInt.format((total - copFirmados).clamp(0, total)),
-                      Icons.pending_outlined,
-                      AppColors.warning,
-                    ),
-                  ],
+                const SizedBox(height: 10),
+                // Paneles de contexto KPI (banner compacto)
+                SizedBox(
+                  height: 124,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _buildKpiPanel(
+                        label: 'Total Predios',
+                        value: fmtInt.format(total),
+                        color: AppColors.primary,
+                        icon: Icons.terrain_outlined,
+                        sparkValues: totalPrediosSeries,
+                      ),
+                      _buildKpiPanel(
+                        label: 'COP Firmados',
+                        value: fmtInt.format(copFirmados),
+                        color: AppColors.secondary,
+                        icon: Icons.check_circle_outline,
+                        sparkValues: copFirmadosSeries,
+                      ),
+                      _buildKpiPanel(
+                        label: 'M² DDV Total',
+                        value: fmtInt.format(m2Total),
+                        color: AppColors.info,
+                        icon: Icons.square_foot_outlined,
+                        sparkValues: m2TotalSeries,
+                      ),
+                      _buildKpiPanel(
+                        label: 'Pendiente COP',
+                        value: fmtInt.format((total - copFirmados).clamp(0, total)),
+                        color: AppColors.warning,
+                        icon: Icons.pending_outlined,
+                        sparkValues: pendienteCopSeries,
+                      ),
+                    ],
+                  ),
                 ),
 
-                const SizedBox(height: 28),
+                const SizedBox(height: 20),
                 Text('Cuantificación DDV', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 12),
-                _buildDdvBar(context, 'DDV Necesario', ddvNecesario, ddvNecesario, AppColors.primary),
-                const SizedBox(height: 8),
-                _buildDdvBar(context, 'DDV Acreditado', ddvAcreditado, ddvNecesario, AppColors.info),
-                const SizedBox(height: 8),
-                _buildDdvBar(context, 'DDV Liberado', ddvLiberado, ddvNecesario, AppColors.secondary),
-                const SizedBox(height: 8),
-                _buildDdvBar(context, 'DDV Pendiente', ddvPendiente, ddvNecesario, AppColors.danger),
+                _buildDdvStackedBar(
+                  context: context,
+                  necesario: ddvNecesario,
+                  acreditadoNoLiberado: ddvAcreditadoNoLiberado,
+                  liberado: ddvLiberado,
+                  pendiente: ddvPendiente,
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'Total DDV Necesario en $_proyectoActual: ${fmt.format(ddvNecesario)} m²',
@@ -295,29 +371,112 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
     );
   }
 
-  Widget _buildDdvBar(BuildContext context, String label, double value, double max, Color color) {
-    final pct = max > 0 ? (value / max).clamp(0.0, 1.0) : 0.0;
+  Widget _buildDdvStackedBar({
+    required BuildContext context,
+    required double necesario,
+    required double acreditadoNoLiberado,
+    required double liberado,
+    required double pendiente,
+  }) {
+    final total = necesario <= 0 ? 1.0 : necesario;
+    final pctAcred = (acreditadoNoLiberado / total).clamp(0.0, 1.0).toDouble();
+    final pctLiber = (liberado / total).clamp(0.0, 1.0).toDouble();
+    final pctPend = (pendiente / total).clamp(0.0, 1.0).toDouble();
     final fmt = NumberFormat('#,##0', 'es_MX');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label, style: const TextStyle(fontSize: 12)),
-            Text('${fmt.format(value)} m²  (${(pct * 100).toStringAsFixed(1)}%)',
-                style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600)),
-          ],
+
+    final segmentWidgets = <Widget>[];
+    if (pctLiber > 0) {
+      segmentWidgets.add(
+        Expanded(
+          flex: (pctLiber * 1000).round().clamp(1, 1000),
+          child: Container(height: 24, color: AppColors.secondary),
         ),
-        const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: pct,
-            backgroundColor: Colors.grey.shade200,
-            color: color,
-            minHeight: 10,
+      );
+    }
+    if (pctAcred > 0) {
+      segmentWidgets.add(
+        Expanded(
+          flex: (pctAcred * 1000).round().clamp(1, 1000),
+          child: Container(height: 24, color: AppColors.info),
+        ),
+      );
+    }
+    if (pctPend > 0) {
+      segmentWidgets.add(
+        Expanded(
+          flex: (pctPend * 1000).round().clamp(1, 1000),
+          child: Container(height: 24, color: AppColors.danger),
+        ),
+      );
+    }
+    if (segmentWidgets.isEmpty) {
+      segmentWidgets.add(
+        Expanded(
+          child: Container(height: 24, color: Colors.grey.shade300),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                '100% DDV Necesario',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              Text(
+                '${fmt.format(necesario)} m²',
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
           ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Row(children: segmentWidgets),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 14,
+            runSpacing: 8,
+            children: <Widget>[
+              _ddvLegend('Liberado', AppColors.secondary, liberado, pctLiber),
+              _ddvLegend('Acreditado', AppColors.info, acreditadoNoLiberado, pctAcred),
+              _ddvLegend('Pendiente', AppColors.danger, pendiente, pctPend),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ddvLegend(String label, Color color, double value, double pct) {
+    final fmt = NumberFormat('#,##0', 'es_MX');
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '$label  ${fmt.format(value)} m² (${(pct * 100).toStringAsFixed(1)}%)',
+          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
         ),
       ],
     );
@@ -336,31 +495,112 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
     }).toList();
   }
 
-  Widget _buildKpiCard(BuildContext context, String label, String value,
-      IconData icon, Color color) {
+  Widget _buildKpiPanel({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color color,
+    required List<double> sparkValues,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      width: 280,
+      margin: const EdgeInsets.only(right: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        gradient: LinearGradient(
+          colors: [color.withValues(alpha: 0.16), color.withValues(alpha: 0.05)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
+        border: Border.all(color: color.withValues(alpha: 0.26)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Stack(
         children: [
-          Icon(icon, color: color, size: 22),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Opacity(
+                opacity: 0.28,
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SizedBox(
+                    height: 44,
+                    child: _buildSparkline(sparkValues, color),
+                  ),
+                ),
+              ),
+            ),
+          ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
+              Row(
+                children: [
+                  Icon(icon, color: color, size: 18),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF707780),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               Text(
                 value,
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color),
+                style: TextStyle(
+                  fontSize: 34,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                  height: 1.0,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+              const SizedBox(height: 14),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSparkline(List<double> values, Color color) {
+    final safeValues = values.isEmpty ? [0.0, 0.0] : values;
+    final maxY = safeValues.reduce((a, b) => a > b ? a : b);
+    return LineChart(
+      LineChartData(
+        minX: 0,
+        maxX: (safeValues.length - 1).toDouble(),
+        minY: 0,
+        maxY: maxY <= 0 ? 1 : maxY * 1.1,
+        lineTouchData: const LineTouchData(enabled: false),
+        titlesData: const FlTitlesData(
+          leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        ),
+        gridData: const FlGridData(show: false),
+        borderData: FlBorderData(show: false),
+        lineBarsData: [
+          LineChartBarData(
+            spots: safeValues
+                .asMap()
+                .entries
+                .map((e) => FlSpot(e.key.toDouble(), e.value))
+                .toList(),
+            isCurved: true,
+            color: color,
+            barWidth: 2,
+            isStrokeCapRound: true,
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(show: true, color: color.withValues(alpha: 0.15)),
           ),
         ],
       ),

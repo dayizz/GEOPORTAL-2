@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/predios_provider.dart';
 import '../providers/demo_predios_notifier.dart';
 import '../providers/local_predios_provider.dart';
 import '../data/predios_repository.dart';
 import '../models/predio.dart';
 import '../../auth/providers/demo_provider.dart';
-import '../../propietarios/data/propietarios_repository.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_strings.dart';
 
@@ -31,14 +32,16 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
   final _kmLinealesCtrl = TextEditingController();
   final _kmEfectivosCtrl = TextEditingController();
   final _superficieCtrl = TextEditingController();
-  final _copFirmadoCtrl = TextEditingController();
   final _poligonoDwgCtrl = TextEditingController();
   final _oficioCtrl = TextEditingController();
+  final _situacionSocialCtrl = TextEditingController();
   final _latCtrl = TextEditingController();
   final _lngCtrl = TextEditingController();
   final _propietarioNombreCtrl = TextEditingController();
 
   String _tramo = 'T1';
+  String _tramoTipo = 'TRAMO';
+  String _tramoNumero = '1';
   String _tipoPropiedad = 'PRIVADA';
   bool _cop = false;
   bool _poligonoInsertado = false;
@@ -47,6 +50,41 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
   bool _negociacion = false;
   String _estatusPredio = 'No liberado';
   String? _propietarioId;
+  String? _pdfUrl;
+  DateTime? _copFecha;
+  bool _uploadingPdf = false;
+
+  String _buildTramoValue() {
+    const prefijos = {
+      'TRAMO': 'T',
+      'FRENTE': 'F',
+      'SEGMENTO': 'S',
+    };
+    final prefijo = prefijos[_tramoTipo] ?? 'T';
+    return '$prefijo$_tramoNumero';
+  }
+
+  void _setTramoFromValue(String valor) {
+    final limpio = valor.trim().toUpperCase();
+    final match = RegExp(r'^([TFS])\s*([1-5])$').firstMatch(limpio);
+
+    if (match != null) {
+      final prefijo = match.group(1)!;
+      final numero = match.group(2)!;
+      _tramoTipo = switch (prefijo) {
+        'F' => 'FRENTE',
+        'S' => 'SEGMENTO',
+        _ => 'TRAMO',
+      };
+      _tramoNumero = numero;
+      _tramo = _buildTramoValue();
+      return;
+    }
+
+    _tramoTipo = 'TRAMO';
+    _tramoNumero = '1';
+    _tramo = _buildTramoValue();
+  }
 
   @override
   void initState() {
@@ -69,13 +107,15 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
         _kmLinealesCtrl.text = predio.kmLineales?.toString() ?? '';
         _kmEfectivosCtrl.text = predio.kmEfectivos?.toString() ?? '';
         _superficieCtrl.text = predio.superficie?.toString() ?? '';
-        _copFirmadoCtrl.text = predio.copFirmado ?? '';
+        _pdfUrl = predio.pdfUrl ?? predio.copFirmado;
+        _copFecha = predio.copFecha;
         _poligonoDwgCtrl.text = predio.poligonoDwg ?? '';
         _oficioCtrl.text = predio.oficio ?? '';
+        _situacionSocialCtrl.text = predio.situacionSocial ?? '';
         _latCtrl.text = predio.latitud?.toString() ?? '';
         _lngCtrl.text = predio.longitud?.toString() ?? '';
         _propietarioNombreCtrl.text = predio.propietarioNombre ?? '';
-        _tramo = predio.tramo;
+        _setTramoFromValue(predio.tramo);
         _tipoPropiedad = predio.tipoPropiedad;
         _cop = predio.cop;
         _poligonoInsertado = predio.poligonoInsertado;
@@ -94,12 +134,155 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
   void dispose() {
     for (final c in [
       _claveCtrl, _ejidoCtrl, _kmInicioCtrl, _kmFinCtrl, _kmLinealesCtrl,
-      _kmEfectivosCtrl, _superficieCtrl, _copFirmadoCtrl, _poligonoDwgCtrl,
-      _oficioCtrl, _latCtrl, _lngCtrl, _propietarioNombreCtrl,
+      _kmEfectivosCtrl, _superficieCtrl, _poligonoDwgCtrl,
+      _oficioCtrl, _situacionSocialCtrl, _latCtrl, _lngCtrl, _propietarioNombreCtrl,
     ]) {
       c.dispose();
     }
     super.dispose();
+  }
+
+  String? _resolvedPdfUrl() {
+    final value = (_pdfUrl ?? '').trim();
+    return value.isEmpty ? null : value;
+  }
+
+  Future<void> _openPdf(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      throw Exception('La URL del PDF es invalida.');
+    }
+    final opened = await launchUrl(uri, webOnlyWindowName: '_blank');
+    if (!opened) {
+      throw Exception('No se pudo abrir el PDF.');
+    }
+  }
+
+  Future<void> _persistPdfUrl(String url) async {
+    final isEdit = widget.id != null;
+    if (!isEdit) {
+      setState(() => _pdfUrl = url);
+      return;
+    }
+
+    final isDemo = ref.read(demoModeProvider);
+    final isLocalPredio = widget.id!.startsWith('local-');
+    final now = DateTime.now();
+
+    if (isDemo) {
+      final predioActual = ref
+          .read(demoPrediosNotifierProvider)
+          .firstWhere((p) => p.id == widget.id);
+      ref.read(demoPrediosNotifierProvider.notifier).updatePredio(
+            predioActual.copyWith(
+              pdfUrl: url,
+              copFirmado: url,
+              copFecha: now,
+              updatedAt: now,
+            ),
+          );
+    } else if (isLocalPredio) {
+      final predioActual = ref
+          .read(localPrediosProvider)
+          .firstWhere((p) => p.id == widget.id);
+      ref.read(localPrediosProvider.notifier).updatePredio(
+            predioActual.copyWith(
+              pdfUrl: url,
+              copFirmado: url,
+              copFecha: now,
+              updatedAt: now,
+            ),
+          );
+    } else {
+      await ref.read(prediosRepositoryProvider).updatePredio(
+        widget.id!,
+        {
+          'pdf_url': url,
+          'cop_firmado': url,
+          'cop_fecha': now.toIso8601String(),
+        },
+      );
+    }
+
+    ref.invalidate(prediosListProvider);
+    ref.invalidate(prediosMapaProvider);
+    ref.invalidate(predioDetalleProvider(widget.id!));
+    if (mounted) {
+      setState(() {
+        _pdfUrl = url;
+        _copFecha = now;
+      });
+    }
+  }
+
+  Future<void> _pickAndUploadPdf() async {
+    if (_uploadingPdf) return;
+    if (widget.id == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Guarda el predio primero para habilitar la carga del PDF.'),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['pdf'],
+      withData: true,
+    );
+
+    if (picked == null || picked.files.isEmpty) return;
+
+    final file = picked.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudieron leer los bytes del PDF seleccionado.'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _uploadingPdf = true);
+
+    try {
+      final extension = (file.extension?.isNotEmpty ?? false)
+          ? file.extension!
+          : 'pdf';
+      final url = await ref.read(prediosRepositoryProvider).uploadPredioPdf(
+            predioId: widget.id!,
+            bytes: bytes,
+            extension: extension,
+          );
+      await _persistPdfUrl(url);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PDF vinculado correctamente.'),
+            backgroundColor: AppColors.secondary,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingPdf = false);
+      }
+    }
   }
 
   Future<void> _submit() async {
@@ -129,9 +312,12 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
           kmEfectivos: _kmEfectivosCtrl.text.isEmpty ? null : double.tryParse(_kmEfectivosCtrl.text),
           superficie: _superficieCtrl.text.isEmpty ? null : double.tryParse(_superficieCtrl.text),
           cop: estatusLiberado,
-          copFirmado: _copFirmadoCtrl.text.isEmpty ? null : _copFirmadoCtrl.text.trim(),
+          copFirmado: _resolvedPdfUrl(),
+          pdfUrl: _resolvedPdfUrl(),
+          copFecha: _copFecha,
           poligonoDwg: _poligonoDwgCtrl.text.isEmpty ? null : _poligonoDwgCtrl.text.trim(),
           oficio: _oficioCtrl.text.isEmpty ? null : _oficioCtrl.text.trim(),
+          situacionSocial: _situacionSocialCtrl.text.isEmpty ? null : _situacionSocialCtrl.text.trim(),
           poligonoInsertado: _poligonoInsertado,
           identificacion: _identificacion,
           levantamiento: _levantamiento,
@@ -156,9 +342,12 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
           kmEfectivos: _kmEfectivosCtrl.text.isEmpty ? null : double.tryParse(_kmEfectivosCtrl.text),
           superficie: _superficieCtrl.text.isEmpty ? null : double.tryParse(_superficieCtrl.text),
           cop: estatusLiberado,
-          copFirmado: _copFirmadoCtrl.text.isEmpty ? null : _copFirmadoCtrl.text.trim(),
+          copFirmado: _resolvedPdfUrl(),
+          pdfUrl: _resolvedPdfUrl(),
+          copFecha: _copFecha,
           poligonoDwg: _poligonoDwgCtrl.text.isEmpty ? null : _poligonoDwgCtrl.text.trim(),
           oficio: _oficioCtrl.text.isEmpty ? null : _oficioCtrl.text.trim(),
+          situacionSocial: _situacionSocialCtrl.text.isEmpty ? null : _situacionSocialCtrl.text.trim(),
           poligonoInsertado: _poligonoInsertado,
           identificacion: _identificacion,
           levantamiento: _levantamiento,
@@ -182,9 +371,12 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
           'km_efectivos': _kmEfectivosCtrl.text.isEmpty ? null : double.tryParse(_kmEfectivosCtrl.text),
           'superficie': _superficieCtrl.text.isEmpty ? null : double.tryParse(_superficieCtrl.text),
           'cop': estatusLiberado,
-          'cop_firmado': _copFirmadoCtrl.text.isEmpty ? null : _copFirmadoCtrl.text.trim(),
+          'cop_firmado': _resolvedPdfUrl(),
+          'pdf_url': _resolvedPdfUrl(),
+          'cop_fecha': _copFecha?.toIso8601String(),
           'poligono_dwg': _poligonoDwgCtrl.text.isEmpty ? null : _poligonoDwgCtrl.text.trim(),
           'oficio': _oficioCtrl.text.isEmpty ? null : _oficioCtrl.text.trim(),
+          'situacion_social': _situacionSocialCtrl.text.isEmpty ? null : _situacionSocialCtrl.text.trim(),
           'poligono_insertado': _poligonoInsertado,
           'identificacion': _identificacion,
           'levantamiento': _levantamiento,
@@ -280,22 +472,39 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
               Row(children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _tramo,
-                    decoration: const InputDecoration(labelText: 'Tramo', prefixIcon: Icon(Icons.route)),
-                    items: ['T1','T2','T3','T4'].map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
-                    onChanged: (v) => setState(() => _tramo = v ?? _tramo),
+                    value: _tramoTipo,
+                    decoration: const InputDecoration(labelText: 'T/F/S', prefixIcon: Icon(Icons.route)),
+                    items: const ['TRAMO', 'FRENTE', 'SEGMENTO']
+                        .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _tramoTipo = v ?? _tramoTipo;
+                      _tramo = _buildTramoValue();
+                    }),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    value: _tramoNumero,
+                    decoration: const InputDecoration(labelText: 'Numero'),
+                    items: const ['1', '2', '3', '4', '5']
+                        .map((n) => DropdownMenuItem(value: n, child: Text(n)))
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _tramoNumero = v ?? _tramoNumero;
+                      _tramo = _buildTramoValue();
+                    }),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
                     value: _tipoPropiedad,
                     decoration: const InputDecoration(labelText: 'Tipo Propiedad'),
                     items: ['SOCIAL','DOMINIO PLENO','PRIVADA'].map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                     onChanged: (v) => setState(() => _tipoPropiedad = v ?? _tipoPropiedad),
                   ),
-                ),
-              ]),
               const SizedBox(height: 14),
               TextFormField(
                 controller: _ejidoCtrl,
@@ -328,16 +537,99 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
                 controller: _propietarioNombreCtrl,
                 decoration: const InputDecoration(labelText: 'Nombre del Propietario', prefixIcon: Icon(Icons.person)),
               ),
-              const SizedBox(height: 12),
-              _PropietarioSelector(selectedId: _propietarioId, onChanged: (id) => setState(() => _propietarioId = id)),
               const SizedBox(height: 24),
               _buildSectionTitle('Documentos', Icons.folder_outlined),
               const SizedBox(height: 12),
-              TextFormField(controller: _copFirmadoCtrl, decoration: const InputDecoration(labelText: 'Archivo COP Firmado (PDF)', prefixIcon: Icon(Icons.picture_as_pdf_outlined))),
-              const SizedBox(height: 14),
-              TextFormField(controller: _poligonoDwgCtrl, decoration: const InputDecoration(labelText: 'Archivo Poligono DWG', prefixIcon: Icon(Icons.map_outlined))),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.description,
+                          color: _resolvedPdfUrl() != null
+                              ? AppColors.secondary
+                              : Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'COP/DOT PDF',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _resolvedPdfUrl() != null
+                                    ? 'Documento vinculado al expediente.'
+                                    : 'No hay PDF cargado para este predio.',
+                                style: const TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _uploadingPdf ? null : _pickAndUploadPdf,
+                          icon: _uploadingPdf
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Icon(_resolvedPdfUrl() == null
+                                  ? Icons.upload_file
+                                  : Icons.sync),
+                          label: Text(_resolvedPdfUrl() == null
+                              ? 'Subir PDF'
+                              : 'Actualizar PDF'),
+                        ),
+                        if (_resolvedPdfUrl() != null)
+                          OutlinedButton.icon(
+                            onPressed: () => _openPdf(_resolvedPdfUrl()!),
+                            icon: const Icon(Icons.open_in_new),
+                            label: const Text('Abrir PDF'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 14),
               TextFormField(controller: _oficioCtrl, decoration: const InputDecoration(labelText: 'Oficio', prefixIcon: Icon(Icons.mail_outlined))),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _situacionSocialCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Situacion social',
+                  prefixIcon: Icon(Icons.description_outlined),
+                ),
+                minLines: 2,
+                maxLines: 4,
+                textInputAction: TextInputAction.newline,
+              ),
               const SizedBox(height: 24),
               _buildSectionTitle('Georeferencia', Icons.gps_fixed),
               const SizedBox(height: 12),
@@ -421,7 +713,6 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
                 }),
                 dense: true,
               ),
-              CheckboxListTile(title: const Text('Poligono Insertado'), value: _poligonoInsertado, onChanged: (v) => setState(() => _poligonoInsertado = v ?? false), dense: true),
               const SizedBox(height: 32),
               SizedBox(
                 width: double.infinity,
@@ -447,95 +738,6 @@ class _PredioFormScreenState extends ConsumerState<PredioFormScreen> {
         Icon(icon, color: AppColors.primary, size: 18),
         const SizedBox(width: 8),
         Text(title, style: Theme.of(context).textTheme.titleMedium),
-      ],
-    );
-  }
-}
-
-class _PropietarioSelector extends ConsumerStatefulWidget {
-  final String? selectedId;
-  final ValueChanged<String?> onChanged;
-
-  const _PropietarioSelector({required this.selectedId, required this.onChanged});
-
-  @override
-  ConsumerState<_PropietarioSelector> createState() => _PropietarioSelectorState();
-}
-
-class _PropietarioSelectorState extends ConsumerState<_PropietarioSelector> {
-  String _busqueda = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final propietariosAsync = ref.watch(
-      FutureProvider((ref) => ref
-          .read(propietariosRepositoryProvider)
-          .getPropietarios(busqueda: _busqueda)),
-    );
-
-    return Column(
-      children: [
-        TextField(
-          decoration: const InputDecoration(
-            hintText: 'Buscar propietario...',
-            prefixIcon: Icon(Icons.search),
-          ),
-          onChanged: (v) => setState(() => _busqueda = v),
-        ),
-        const SizedBox(height: 8),
-        propietariosAsync.when(
-          loading: () => const SizedBox.shrink(),
-          error: (e, _) => Text(e.toString()),
-          data: (propietarios) {
-            if (propietarios.isEmpty) {
-              return Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  children: [
-                    const Text('Sin propietarios registrados'),
-                    TextButton.icon(
-                      icon: const Icon(Icons.add),
-                      label: const Text('Registrar propietario'),
-                      onPressed: () => context.push('/propietarios/nuevo'),
-                    ),
-                  ],
-                ),
-              );
-            }
-
-            return Container(
-              height: 200,
-              decoration: BoxDecoration(
-                border: Border.all(color: AppColors.border),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: ListView.separated(
-                itemCount: propietarios.length + 1,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (ctx, i) {
-                  if (i == 0) {
-                    return RadioListTile<String?>(
-                      value: null,
-                      groupValue: widget.selectedId,
-                      onChanged: widget.onChanged,
-                      title: const Text('Sin asignar'),
-                      dense: true,
-                    );
-                  }
-                  final p = propietarios[i - 1];
-                  return RadioListTile<String?>(
-                    value: p.id,
-                    groupValue: widget.selectedId,
-                    onChanged: widget.onChanged,
-                    title: Text(p.nombreCompleto, style: const TextStyle(fontSize: 13)),
-                    subtitle: p.rfc != null ? Text(p.rfc!, style: const TextStyle(fontSize: 11)) : null,
-                    dense: true,
-                  );
-                },
-              ),
-            );
-          },
-        ),
       ],
     );
   }
