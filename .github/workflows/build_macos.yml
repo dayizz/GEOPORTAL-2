@@ -1,0 +1,95 @@
+name: Build macOS DMG
+
+# Ejecuta en cada push de tag v* (ej. v1.0.0, v1.2.3)
+# También permite ejecución manual desde GitHub Actions UI
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión del DMG (ej. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Calcular versión
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Eliminar el prefijo "v" del tag (v1.0.0 -> 1.0.0)
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "DMG_NAME=geoportal_predios_v${VERSION}.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Instalar Flutter 3.41.7
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Flutter analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build macOS (release)
+        run: flutter build macos --release
+
+      - name: Firma ad-hoc del .app
+        run: |
+          APP="build/macos/Build/Products/Release/geoportal_predios.app"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          echo "Firma ad-hoc OK"
+
+      - name: Crear DMG
+        run: |
+          mkdir -p dist
+          APP="build/macos/Build/Products/Release/geoportal_predios.app"
+          hdiutil create \
+            -volname "Geoportal Predios" \
+            -srcfolder "$APP" \
+            -ov \
+            -format UDZO \
+            -o "dist/${{ steps.version.outputs.DMG_NAME }}"
+          hdiutil verify "dist/${{ steps.version.outputs.DMG_NAME }}"
+          ls -lh dist/
+
+      - name: Subir DMG como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.DMG_NAME }}
+          path: dist/${{ steps.version.outputs.DMG_NAME }}
+          retention-days: 30
+
+      - name: Crear GitHub Release con DMG
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ steps.version.outputs.DMG_NAME }}
+          name: "Geoportal Predios v${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## Geoportal Predios v${{ steps.version.outputs.VERSION }}
+
+            ### Instalación
+            1. Descarga el `.dmg`
+            2. Ábrelo y arrastra la app a Aplicaciones
+            3. Primera vez: clic derecho > Abrir (firma ad-hoc)
+
+            ### Notas
+            - Requiere macOS 12+
+            - Arquitectura universal (Intel x86_64 + Apple Silicon arm64)

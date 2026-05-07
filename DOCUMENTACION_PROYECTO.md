@@ -515,4 +515,5 @@ Cada fase tiene su propio documento en la carpeta `docs/`:
 | 4 | [docs/IMPL_04_desktop_fase4_ux_escritorio.md](docs/IMPL_04_desktop_fase4_ux_escritorio.md) | ✅ Completado |
 | 5 | [docs/IMPL_05_desktop_fase5_empaquetado_dmg.md](docs/IMPL_05_desktop_fase5_empaquetado_dmg.md) | ✅ Completado |
 | 6 | [docs/IMPL_06_desktop_fase6_firma_notarizacion.md](docs/IMPL_06_desktop_fase6_firma_notarizacion.md) | ✅ Ad-hoc / ⏳ Developer ID (requiere Apple Developer Program) |
+| 7 | [docs/IMPL_07_desktop_fase7_cicd_github_actions.md](docs/IMPL_07_desktop_fase7_cicd_github_actions.md) | ✅ Completado |
 
