@@ -28,7 +28,9 @@ class AppScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width > 768;
+    final width = MediaQuery.of(context).size.width;
+    final isWide = width > 768;
+    final isVeryWide = width > 1200;
 
     if (isWide) {
       return Scaffold(
@@ -37,9 +39,12 @@ class AppScaffold extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             NavigationRail(
+              extended: isVeryWide,
               selectedIndex: currentIndex,
               onDestinationSelected: (i) => context.go(_navItems[i].route),
-              labelType: NavigationRailLabelType.all,
+              labelType: isVeryWide
+                  ? NavigationRailLabelType.none
+                  : NavigationRailLabelType.all,
               leading: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Column(
