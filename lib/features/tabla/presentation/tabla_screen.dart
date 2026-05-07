@@ -1,3 +1,6 @@
+import 'dart:io' show File;
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -662,7 +665,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     if (uri == null) {
       throw Exception('La URL del PDF es invalida.');
     }
-    final opened = await launchUrl(uri, webOnlyWindowName: '_blank');
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened) {
       throw Exception('No se pudo abrir el PDF.');
     }
@@ -678,12 +681,16 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['pdf'],
-      withData: true,
+      withData: kIsWeb,
     );
     if (picked == null || picked.files.isEmpty) return;
 
     final file = picked.files.single;
-    final bytes = file.bytes;
+    final Uint8List? bytes = kIsWeb
+        ? file.bytes
+        : file.path != null
+            ? await File(file.path!).readAsBytes()
+            : null;
     if (bytes == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

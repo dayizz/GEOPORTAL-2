@@ -510,4 +510,5 @@ Cada fase tiene su propio documento en la carpeta `docs/`:
 | # | Documento | Estado |
 |---|---|---|
 | 1 | [docs/IMPL_01_desktop_fase1_build_macos.md](docs/IMPL_01_desktop_fase1_build_macos.md) | ✅ Completado |
+| 2 | [docs/IMPL_02_desktop_fase2_apis_web_especificas.md](docs/IMPL_02_desktop_fase2_apis_web_especificas.md) | ✅ Completado |
 

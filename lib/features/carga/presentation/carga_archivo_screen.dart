@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io' show File;
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -97,7 +99,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   Future<void> _seleccionarArchivo() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
-      withData: true,
+      withData: kIsWeb,
     );
 
     if (result == null || result.files.isEmpty) return;
@@ -133,13 +135,18 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     });
 
     try {
-      Uint8List? bytes = file.bytes;
-      if (bytes == null && file.readStream != null) {
-        final collected = <int>[];
-        await for (final chunk in file.readStream!) {
-          collected.addAll(chunk);
+      Uint8List? bytes;
+      if (kIsWeb) {
+        bytes = file.bytes;
+        if (bytes == null && file.readStream != null) {
+          final collected = <int>[];
+          await for (final chunk in file.readStream!) {
+            collected.addAll(chunk);
+          }
+          bytes = Uint8List.fromList(collected);
         }
-        bytes = Uint8List.fromList(collected);
+      } else {
+        if (file.path != null) bytes = await File(file.path!).readAsBytes();
       }
 
       if (bytes == null) {
