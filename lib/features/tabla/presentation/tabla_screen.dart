@@ -1,11 +1,7 @@
-import 'dart:io' show File;
-import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../../core/constants/app_colors.dart';
@@ -16,6 +12,8 @@ import '../../predios/providers/local_predios_provider.dart';
 import '../../predios/providers/predios_provider.dart';
 import '../../propietarios/providers/local_propietarios_provider.dart';
 import '../../propietarios/providers/propietarios_provider.dart';
+import '../providers/ocr_provider.dart';
+import '../services/pdf_ocr_service.dart';
 
 class TablaScreen extends ConsumerStatefulWidget {
   const TablaScreen({super.key});
@@ -31,7 +29,6 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
   final _searchCtrl = TextEditingController();
   final _verticalScroll = ScrollController();
   final Map<String, Predio> _prediosOptimistas = {};
-  final Set<String> _uploadingPdfIds = <String>{};
   List<Predio> _ultimosPredios = const [];
 
   String _proyectoActual = 'TQI';
@@ -129,7 +126,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
       if (_filtroTramo != null && p.tramo != _filtroTramo) return false;
       if (_filtroTipo != null && p.tipoPropiedad != _filtroTipo) return false;
       if (_filtroEstatus != null) {
-        final estatus = p.cop ? 'Liberado' : 'No liberado';
+        final estatus = p.estatusGestion;
         if (estatus != _filtroEstatus) return false;
       }
       if (_filtroCop != null) {
@@ -192,6 +189,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
   Widget build(BuildContext context) {
     final prediosAsync = ref.watch(prediosListProvider);
     Widget content;
+
     if (prediosAsync.isLoading) {
       content = const Center(child: CircularProgressIndicator());
     } else if (prediosAsync.hasError) {
@@ -213,7 +211,6 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
         ),
       );
     } else {
-      // Si no hay datos, mostrar mensaje amigable y evitar errores
       final remoteData = prediosAsync.asData?.value;
       final prediosList = remoteData ?? _ultimosPredios;
       if (prediosList.isEmpty) {
@@ -241,9 +238,9 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
         final totalPages = (filtered.length / _rowsPerPage).ceil();
         final pageRows = filtered.skip(_startRow).take(_rowsPerPage).toList();
 
-        // Auto-seleccionar el proyecto solicitado por la pantalla de carga (post-importación)
         final proyectoSolicitado = ref.watch(gestionProyectoProvider);
-        if (proyectoSolicitado != null && _proyectos.contains(proyectoSolicitado) &&
+        if (proyectoSolicitado != null &&
+            _proyectos.contains(proyectoSolicitado) &&
             proyectoSolicitado != _proyectoActual) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
@@ -274,7 +271,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
                           ? () => _goToPage(_currentPage - 1, filtered.length)
                           : null,
                     ),
-                    Text('Página \\${_currentPage + 1} de $totalPages'),
+                    Text('Página ${_currentPage + 1} de $totalPages'),
                     IconButton(
                       icon: const Icon(Icons.chevron_right),
                       onPressed: _currentPage < totalPages - 1
@@ -299,7 +296,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     }
 
     return AppScaffold(
-      currentIndex: 3,
+      currentIndex: 1,
       title: 'Gestion',
       child: content,
     );
@@ -546,7 +543,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     return LayoutBuilder(
       builder: (ctx, constraints) {
         final rawTotal = rawWidths.reduce((a, b) => a + b) + rawWidths.length * 1.0;
-        final scale = (constraints.maxWidth / rawTotal).clamp(0.7, 1.4);
+        final scale = (constraints.maxWidth / rawTotal).clamp(0.3, 1.4);
         final colWidths = rawWidths.map((w) => w * scale).toList();
         final totalWidth = constraints.maxWidth;
 
@@ -671,64 +668,216 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     }
   }
 
-  Future<void> _handleCopPdfTap(Predio predio) async {
-    final existingUrl = _pdfUrlFor(predio);
-    if (existingUrl != null) {
+  bool _isGoogleDrivePdfUrl(String value) {
+    final uri = Uri.tryParse(value.trim());
+    if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
+      return false;
+    }
+    final host = uri.host.toLowerCase();
+    if (host != 'drive.google.com') return false;
+
+    final path = uri.path.toLowerCase();
+    final hasFilePath = path.contains('/file/d/');
+    final hasUcPath = path.startsWith('/uc') && uri.queryParameters.containsKey('id');
+    final hasOpenPath = path.startsWith('/open') && uri.queryParameters.containsKey('id');
+    return hasFilePath || hasUcPath || hasOpenPath;
+  }
+
+  Future<String?> _askGoogleDrivePdfUrl(Predio predio) async {
+    final controller = TextEditingController(text: _pdfUrlFor(predio) ?? '');
+    String? error;
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocalState) => AlertDialog(
+            title: const Text('Vincular COT/DOT (Google Drive)'),
+            content: SizedBox(
+              width: 520,
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'URL del PDF',
+                  hintText: 'https://drive.google.com/file/d/.../view?usp=sharing',
+                  errorText: error,
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final value = controller.text.trim();
+                  if (value.isEmpty) {
+                    setLocalState(() {
+                      error = 'Debes ingresar una URL de Google Drive.';
+                    });
+                    return;
+                  }
+                  if (!_isGoogleDrivePdfUrl(value)) {
+                    setLocalState(() {
+                      error = 'Solo se permite URL de PDF desde Google Drive.';
+                    });
+                    return;
+                  }
+                  Navigator.pop(ctx, value);
+                },
+                child: const Text('Vincular'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _showCopDotActions(Predio predio, String existingUrl) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.open_in_new_rounded),
+              title: const Text('Abrir PDF'),
+              onTap: () => Navigator.pop(ctx, 'open'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.text_fields_rounded),
+              title: const Text('Leer datos (OCR)'),
+              subtitle: const Text('Detecta km, m² y fecha de firma', style: TextStyle(fontSize: 12)),
+              onTap: () => Navigator.pop(ctx, 'ocr'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.link_rounded),
+              title: const Text('Reemplazar URL'),
+              onTap: () => Navigator.pop(ctx, 'replace'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline_rounded, color: AppColors.danger),
+              title: const Text('Eliminar vinculo', style: TextStyle(color: AppColors.danger)),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+
+    if (action == 'open') {
       await _openPdfUrl(existingUrl);
       return;
     }
 
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['pdf'],
-      withData: kIsWeb,
-    );
-    if (picked == null || picked.files.isEmpty) return;
-
-    final file = picked.files.single;
-    final Uint8List? bytes = kIsWeb
-        ? file.bytes
-        : file.path != null
-            ? await File(file.path!).readAsBytes()
-            : null;
-    if (bytes == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No se pudieron leer los bytes del PDF seleccionado.'),
-            backgroundColor: AppColors.danger,
-          ),
-        );
-      }
+    if (action == 'ocr') {
+      await _handleOcrExtraction(predio, existingUrl);
       return;
     }
 
-    setState(() => _uploadingPdfIds.add(predio.id));
-    try {
-      final extension = (file.extension?.isNotEmpty ?? false)
-          ? file.extension!
-          : 'pdf';
-      final url = await ref.read(prediosRepositoryProvider).uploadPredioPdf(
-            predioId: predio.id,
-            bytes: bytes,
-            extension: extension,
-          );
+    if (action == 'replace') {
+      final newUrl = await _askGoogleDrivePdfUrl(predio);
+      if (newUrl == null || newUrl.isEmpty) return;
+
       await _savePredio(
         predio,
         predio.copyWith(
-          pdfUrl: url,
-          copFirmado: url,
+          pdfUrl: newUrl,
+          copFirmado: newUrl,
           copFecha: DateTime.now(),
           updatedAt: DateTime.now(),
         ),
       );
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('PDF vinculado correctamente.'),
+            content: Text('URL de Google Drive actualizada.'),
             backgroundColor: AppColors.secondary,
           ),
         );
+      }
+
+      // Auto-ejecutar OCR después de vincular
+      if (mounted) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            _handleOcrExtraction(predio, newUrl);
+          }
+        });
+      }
+      return;
+    }
+
+    if (action == 'delete') {
+      await _savePredio(
+        predio,
+        predio.copyWith(
+          pdfUrl: '',
+          copFirmado: '',
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Vinculo COT/DOT eliminado.'),
+            backgroundColor: AppColors.warning,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleCopPdfTap(Predio predio) async {
+    final existingUrl = _pdfUrlFor(predio);
+    if (existingUrl != null) {
+      await _showCopDotActions(predio, existingUrl);
+      return;
+    }
+
+    final url = await _askGoogleDrivePdfUrl(predio);
+    if (url == null || url.isEmpty) return;
+
+    try {
+      final updatedPredio = predio.copyWith(
+        pdfUrl: url,
+        copFirmado: url,
+        copFecha: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      
+      await _savePredio(predio, updatedPredio);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('URL de Google Drive vinculada correctamente.'),
+            backgroundColor: AppColors.secondary,
+          ),
+        );
+      }
+
+      // Auto-ejecutar OCR después de vincular
+      if (mounted) {
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) {
+            _handleOcrExtraction(updatedPredio, url);
+          }
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -739,11 +888,195 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           ),
         );
       }
-    } finally {
-      if (mounted) {
-        setState(() => _uploadingPdfIds.remove(predio.id));
-      }
     }
+  }
+
+  Future<void> _handleOcrExtraction(Predio predio, String pdfUrl) async {
+    if (!mounted) return;
+
+    // Mostrar dialog con loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        content: SizedBox(
+          width: 300,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              const Text(
+                'Leyendo PDF con OCR...',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Detectando km, m² y fecha',
+                style: TextStyle(fontSize: 12, color: AppColors.textLight),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // Ejecutar OCR
+      final ocrNotifier = ref.read(ocrExtractionProvider.notifier);
+      await ocrNotifier.extractFromGoogleDriveUrl(pdfUrl);
+      
+      final ocrState = ref.read(ocrExtractionProvider);
+      final ocrData = ocrState.data;
+
+      if (!mounted) return;
+      Navigator.pop(context); // Cerrar loading dialog
+
+      if (ocrData == null || !ocrData.hasAnyData) {
+        _showOcrResultDialog(
+          'Sin datos detectados',
+          'No se encontraron km, m² o fecha de firma en el PDF.\n\nVerifica que el documento sea legible y contenga esta información.',
+        );
+        return;
+      }
+
+      // Mostrar preview de datos extraídos
+      final shouldUpdate = await _showOcrPreviewDialog(ocrData);
+      if (shouldUpdate == true && mounted) {
+        // Actualizar predio con datos extraídos
+        final updated = predio.copyWith(
+          kmInicio: ocrData.kmInicio ?? predio.kmInicio,
+          kmFin: ocrData.kmFin ?? predio.kmFin,
+          superficie: ocrData.superficie ?? predio.superficie,
+          copFecha: ocrData.fechaFirma ?? predio.copFecha,
+          updatedAt: DateTime.now(),
+        );
+
+        await _savePredio(predio, updated);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Datos auto-rellenados: '
+                '${ocrData.kmInicio != null ? '✓km inicio ' : ''}'
+                '${ocrData.kmFin != null ? '✓km fin ' : ''}'
+                '${ocrData.superficie != null ? '✓m² ' : ''}'
+                '${ocrData.fechaFirma != null ? '✓fecha' : ''}',
+              ),
+              backgroundColor: AppColors.secondary,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Cerrar loading dialog
+      _showOcrResultDialog(
+        'Error en OCR',
+        'No se pudo procesar el PDF: ${e.toString()}',
+      );
+    }
+  }
+
+  Future<bool?> _showOcrPreviewDialog(PdfOcrData ocrData) async {
+    final fmtNum = NumberFormat('0.0000');
+    final fmtNum2 = NumberFormat('0.00');
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Datos extraídos del PDF'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildOcrDataRow(
+                'KM Inicio',
+                ocrData.kmInicio != null ? fmtNum.format(ocrData.kmInicio!) : 'No detectado',
+                ocrData.kmInicio != null,
+              ),
+              const SizedBox(height: 12),
+              _buildOcrDataRow(
+                'KM Fin',
+                ocrData.kmFin != null ? fmtNum.format(ocrData.kmFin!) : 'No detectado',
+                ocrData.kmFin != null,
+              ),
+              const SizedBox(height: 12),
+              _buildOcrDataRow(
+                'Superficie (m²)',
+                ocrData.superficie != null ? fmtNum2.format(ocrData.superficie!) : 'No detectado',
+                ocrData.superficie != null,
+              ),
+              const SizedBox(height: 12),
+              _buildOcrDataRow(
+                'Fecha Firma',
+                ocrData.fechaFirma != null
+                    ? DateFormat('dd/MM/yyyy').format(ocrData.fechaFirma!)
+                    : 'No detectada',
+                ocrData.fechaFirma != null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Auto-rellenar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOcrDataRow(String label, String value, bool detected) {
+    return Row(
+      children: [
+        Icon(
+          detected ? Icons.check_circle : Icons.circle_outlined,
+          color: detected ? AppColors.secondary : AppColors.textLight,
+          size: 20,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: AppColors.textLight),
+              ),
+              Text(
+                value,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showOcrResultDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Aceptar'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildDataRow(Predio p, List<double> widths, int idx) {
@@ -837,8 +1170,12 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
   }
 
   Widget _estatusCell(Predio predio, double width) {
-    final estatus = predio.cop ? 'Liberado' : 'No liberado';
-    final color = predio.cop ? AppColors.secondary : AppColors.danger;
+    final estatus = predio.estatusGestion;
+    final color = switch (estatus) {
+      'Liberado' => AppColors.secondary,
+      'No liberado' => AppColors.danger,
+      _ => Colors.grey,
+    };
 
     return Container(
       width: width,
@@ -976,18 +1313,15 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
 
   Widget _copPdfIndicatorCell(Predio predio, double width) {
     final hasPdf = _pdfUrlFor(predio) != null;
-    final uploading = _uploadingPdfIds.contains(predio.id);
     final iconColor = hasPdf ? AppColors.secondary : Colors.grey.shade400;
-    final tooltip = uploading
-        ? 'Subiendo PDF...'
-        : hasPdf
-            ? 'Abrir PDF vinculado'
-            : 'Subir PDF';
+    final tooltip = hasPdf
+        ? 'Abrir PDF vinculado'
+        : 'Vincular URL de Google Drive';
 
     return Tooltip(
       message: tooltip,
       child: InkWell(
-        onTap: uploading ? null : () => _handleCopPdfTap(predio),
+        onTap: () => _handleCopPdfTap(predio),
         child: Container(
           width: width,
           height: double.infinity,
@@ -995,17 +1329,11 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           decoration: const BoxDecoration(
             border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
           ),
-          child: uploading
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Icon(
-                  Icons.description,
-                  size: 18,
-                  color: iconColor,
-                ),
+          child: Icon(
+            Icons.description,
+            size: 18,
+            color: iconColor,
+          ),
         ),
       ),
     );
