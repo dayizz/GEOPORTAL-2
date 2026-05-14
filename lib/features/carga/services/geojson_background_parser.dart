@@ -56,7 +56,16 @@ Future<GeoJsonBackgroundParseResult> parseGeoJsonInBackground({
 Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
   final bytes = request['bytes'] as Uint8List;
   final fileName = request['fileName'] as String;
-  final jsonStr = utf8.decode(bytes);
+  String jsonStr;
+  try {
+    jsonStr = utf8.decode(bytes);
+  } on FormatException {
+    // Algunos exportadores GIS guardan texto con bytes no UTF-8 estrictos.
+    jsonStr = utf8.decode(bytes, allowMalformed: true);
+  }
+  if (jsonStr.startsWith('\uFEFF')) {
+    jsonStr = jsonStr.substring(1);
+  }
   final raw = jsonDecode(jsonStr);
 
   if (raw is! Map) {
@@ -154,6 +163,12 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
       'properties': propsEnriched,
       'geometry': geometry,
     });
+  }
+
+  if (enrichedFeatures.isEmpty) {
+    throw const FormatException(
+      'El archivo contiene features, pero ninguna tiene estructura valida para importar.',
+    );
   }
 
   const aliasProyecto = [

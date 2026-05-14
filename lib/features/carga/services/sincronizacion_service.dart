@@ -1,3 +1,5 @@
+import 'dart:async' show TimeoutException;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../predios/data/predios_repository.dart';
 import '../../propietarios/data/propietarios_repository.dart';
@@ -93,6 +95,7 @@ class SincronizacionService {
   static const int _maxSyncConcurrency = 12;
   static const int _maxRetryAttempts = 3;
   static const int _baseRetryDelayMs = 250;
+  static const Duration _operationTimeout = Duration(seconds: 12);
 
   SincronizacionService(this._prediosRepo, this._propietariosRepo);
 
@@ -361,7 +364,12 @@ class SincronizacionService {
 
     for (var attempt = 1; attempt <= _maxRetryAttempts; attempt++) {
       try {
-        return await operation();
+        return await operation().timeout(
+          _operationTimeout,
+          onTimeout: () => throw TimeoutException(
+            '$operationName timeout (${_operationTimeout.inSeconds}s)',
+          ),
+        );
       } catch (e) {
         lastError = e;
         final shouldRetry = attempt < _maxRetryAttempts && _isRetryableError(e);
@@ -708,18 +716,35 @@ class SincronizacionService {
     // ── Fase 2: propietarios + batch create ──────────────────────────────────
     var creados = 0;
     if (pendingCreates.isNotEmpty) {
+      final propietariosCache = <String, String>{};
+
       // 2a. Crear propietarios secuencialmente (evita duplicados).
       for (final pending in pendingCreates) {
         final nombreProp = pending.predioData['propietario_nombre'] as String?;
         if (nombreProp != null && nombreProp.isNotEmpty) {
+          final propData = _buildPropietarioData(pending.props);
+          final cacheKey = [
+            (propData['nombre'] ?? '').toString().trim().toUpperCase(),
+            (propData['apellidos'] ?? '').toString().trim().toUpperCase(),
+            (propData['rfc'] ?? '').toString().trim().toUpperCase(),
+            (propData['curp'] ?? '').toString().trim().toUpperCase(),
+          ].join('|');
+
+          final cachedId = propietariosCache[cacheKey];
+          if (cachedId != null && cachedId.isNotEmpty) {
+            pending.predioData['propietario_id'] = cachedId;
+            continue;
+          }
+
           try {
             final propietario = await _withRetry(
-              () => _propietariosRepo.findOrCreateFromData(
-                _buildPropietarioData(pending.props),
-              ),
+              () => _propietariosRepo.findOrCreateFromData(propData),
               operationName: 'findOrCreatePropietario',
             );
             pending.predioData['propietario_id'] = propietario.id;
+            if (cacheKey.replaceAll('|', '').isNotEmpty) {
+              propietariosCache[cacheKey] = propietario.id;
+            }
           } catch (_) {}
         }
       }
@@ -743,6 +768,8 @@ class SincronizacionService {
             predioId: created[i].id,
           );
           creados++;
+          procesados += 1;
+          onProgress?.call(procesados, features.length);
         }
       } catch (_) {
         // Fallback: crear individualmente si el batch falla.
@@ -762,6 +789,8 @@ class SincronizacionService {
               predioId: predio.id,
             );
             creados++;
+            procesados += 1;
+            onProgress?.call(procesados, features.length);
           } catch (e2) {
             errores++;
             if (mensajesError.length < 5) {
@@ -774,6 +803,8 @@ class SincronizacionService {
               feature: {...pending.feature, 'properties': propsErr},
               existia: false,
             );
+            procesados += 1;
+            onProgress?.call(procesados, features.length);
           }
         }
       }
@@ -868,14 +899,15 @@ class SincronizacionService {
         pendingCreates: pendingCreates,
         archivoId: archivoId,
       );
-      if (result != null) onOutcome(result);
+      onOutcome(result);
     }
   }
 
   /// Fase lookup de un único feature.
   /// - Si el predio ya existe → actualiza y devuelve outcome completo.
-  /// - Si es nuevo → añade a [pendingCreates] y devuelve null (se procesa en batch).
-  Future<_FeatureSyncOutcome?> _processFeatureLookup(
+  /// - Si es nuevo → añade a [pendingCreates] y devuelve outcome "pendiente" para
+  ///   reflejar progreso en UI durante la fase de validación.
+  Future<_FeatureSyncOutcome> _processFeatureLookup(
     int featureIndex,
     Map<String, dynamic> feature, {
     required Map<String, Map<String, dynamic>?> predioByClaveCache,
@@ -951,7 +983,22 @@ class SincronizacionService {
         geometry: geometry,
         predioData: predioData,
       ));
-      return null; // Se procesará en la fase 2 (batch).
+
+      final pendingProps = Map<String, dynamic>.from(props)
+        ..['_syncStatus'] = 'pending_create'
+        ..['_syncSource'] = 'geojson_import'
+        ..['_syncAt'] = DateTime.now().toIso8601String();
+
+      return _FeatureSyncOutcome(
+        featureIndex: featureIndex,
+        result: FeatureSyncResult(
+          feature: {...feature, 'properties': pendingProps},
+          existia: false,
+        ),
+        encontrados: 0,
+        creados: 0,
+        errores: 0,
+      );
     } catch (e) {
       // En caso de error de lookup, marcar como error.
       final propsErr = _preparedGeoJsonProps(feature)

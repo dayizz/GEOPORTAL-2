@@ -64,7 +64,9 @@ class LocalArchivosRepository {
 
   // ── API pública ──────────────────────────────────────────────────────────
 
-  Future<List<Map<String, dynamic>>> getArchivos() async {
+  Future<List<Map<String, dynamic>>> getArchivos({
+    bool withFullFeatures = true,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);
     if (raw == null || raw.isEmpty) return [];
@@ -75,7 +77,7 @@ class LocalArchivosRepository {
       return [];
     }
 
-    if (!kIsWeb) {
+    if (!kIsWeb && withFullFeatures) {
       // En desktop, reemplazar features con el archivo completo si existe
       for (var entry in list) {
         final id = entry['id'] as String?;
@@ -91,6 +93,16 @@ class LocalArchivosRepository {
     return list;
   }
 
+  Future<Map<String, dynamic>?> getArchivoById(
+    String id, {
+    bool withFullFeatures = true,
+  }) async {
+    final list = await getArchivos(withFullFeatures: withFullFeatures);
+    final index = list.indexWhere((entry) => entry['id'] == id);
+    if (index < 0) return null;
+    return list[index];
+  }
+
   Future<Map<String, dynamic>> saveArchivo({
     required String nombre,
     required List<Map<String, dynamic>> features,
@@ -101,7 +113,7 @@ class LocalArchivosRepository {
     int creados = 0,
     int errores = 0,
   }) async {
-    final existing = await getArchivos();
+    final existing = await getArchivos(withFullFeatures: false);
     // getArchivos() en desktop ya enriqueció las entradas con features completos;
     // para guardar en prefs volvemos a usar el preview de cada una.
     final indexEntries = existing.map((e) {
@@ -152,7 +164,7 @@ class LocalArchivosRepository {
     int? creados,
     int? errores,
   }) async {
-    final existing = await getArchivos();
+    final existing = await getArchivos(withFullFeatures: false);
     final index = existing.indexWhere((entry) => entry['id'] == id);
     if (index < 0) return null;
 
@@ -198,7 +210,7 @@ class LocalArchivosRepository {
   }
 
   Future<void> deleteArchivo(String id) async {
-    final existing = await getArchivos();
+    final existing = await getArchivos(withFullFeatures: false);
     existing.removeWhere((e) => e['id'] == id);
     final indexEntries = existing.map((e) {
       final preview = (e['features'] as List?)

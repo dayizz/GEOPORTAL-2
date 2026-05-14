@@ -1,7 +1,8 @@
+import 'dart:async' show TimeoutException;
 import 'dart:convert';
 import 'dart:io' show File;
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -34,6 +35,10 @@ class CargaArchivoScreen extends ConsumerStatefulWidget {
 }
 
 class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
+  static const int _maxStoredXlsxFeatures = 300;
+  static const Duration _geoJsonSyncTimeout = Duration(seconds: 45);
+  static const int _geoJsonLocalFirstThreshold = 100;
+
   bool _loading = false;
   bool _sincronizando = false;
   bool _eliminando = false;
@@ -159,7 +164,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   Future<void> _cargarArchivosDesdeBD() async {
     try {
       final repo = ref.read(localArchivosRepositoryProvider);
-      final rawList = await repo.getArchivos();
+      final rawList = await repo.getArchivos(withFullFeatures: false);
       final bdFiles = await _rehydrateImportedFilesOnLoad(rawList);
       if (!mounted) return;
       ref.read(cargaProvider.notifier).initFromBD(bdFiles);
@@ -184,14 +189,14 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         .whereType<ImportedFile>()
         .toList(growable: false);
 
-    final needsHydration = parsed.any(
-      (file) => file.sincronizado && file.features.isNotEmpty,
-    );
+    final needsHydration = parsed.any(_fileRequiresHydration);
     if (!needsHydration) {
       return parsed;
     }
 
-    final predios = await ref.read(prediosMapaProvider.future);
+    final predios = await ref
+      .read(prediosMapaProvider.future)
+      .timeout(const Duration(seconds: 4), onTimeout: () => <Predio>[]);
     final byId = <String, Predio>{
       for (final predio in predios) predio.id: predio,
     };
@@ -210,7 +215,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
     final hydratedFiles = <ImportedFile>[];
     for (final file in parsed) {
-      if (!file.sincronizado || file.features.isEmpty) {
+      if (!_fileRequiresHydration(file)) {
         hydratedFiles.add(file);
         continue;
       }
@@ -244,6 +249,16 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     return hydratedFiles;
   }
 
+  bool _fileRequiresHydration(ImportedFile file) {
+    if (!file.sincronizado || file.features.isEmpty) return false;
+    // Solo rehidratamos archivos geoespaciales (GeoJSON con geometria).
+    // Los XLSX guardados como preview no requieren este paso y pueden ser muy grandes.
+    return file.features.any((feature) {
+      final geometry = feature['geometry'];
+      return geometry is Map && geometry.isNotEmpty;
+    });
+  }
+
   Future<void> _seleccionarArchivo() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
@@ -257,12 +272,12 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     final ext = file.name.split('.').last.toLowerCase();
 
     // Validar que sea un archivo permitido
-    if (!['geojson', 'json', 'xlsx', 'xlsl'].contains(ext)) {
+    if (!['geojson', 'json', 'xlsx', 'xls'].contains(ext)) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Archivo no soportado. Usa .geojson, .json, .xlsx o .xlsl',
+            'Archivo no soportado. Usa .geojson, .json, .xlsx o .xls',
             style: const TextStyle(color: Colors.white),
           ),
           backgroundColor: AppColors.danger,
@@ -303,9 +318,10 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         return;
       }
 
-      if (ext == 'xlsx' || ext == 'xlsl') {
+      if (ext == 'xlsx' || ext == 'xls') {
         await _parsearXlsx(bytes);
       } else {
+        debugPrint('[GEOJSON] archivo seleccionado: ${file.name} (ext=$ext, bytes=${bytes.length})');
         await _parsearGeoJSON(bytes);
       }
     } finally {
@@ -336,10 +352,12 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
   Future<void> _parsearGeoJSON(Uint8List bytes) async {
     try {
+      debugPrint('[GEOJSON] iniciando parseo en background...');
       final parseResult = await parseGeoJsonInBackground(
         bytes: bytes,
         fileName: _archivoSeleccionado?.name ?? 'archivo.geojson',
       );
+      debugPrint('[GEOJSON] parseo completado: total=${parseResult.totalFeatures}, preview=${parseResult.preview.length}');
 
       if (!mounted) return;
       setState(() {
@@ -353,9 +371,30 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       });
       _mostrarSnackBar('${parseResult.totalFeatures} features encontrados');
     } catch (e) {
+      debugPrint('[GEOJSON] error parseando archivo: $e');
       if (!mounted) return;
       _mostrarSnackBar('Error al leer el archivo: $e', exito: false);
     }
+  }
+
+  Future<Uint8List?> _leerBytesArchivoSeleccionado() async {
+    final file = _archivoSeleccionado;
+    if (file == null) return null;
+
+    if (kIsWeb) {
+      var bytes = file.bytes;
+      if (bytes == null && file.readStream != null) {
+        final collected = <int>[];
+        await for (final chunk in file.readStream!) {
+          collected.addAll(chunk);
+        }
+        bytes = Uint8List.fromList(collected);
+      }
+      return bytes;
+    }
+
+    if (file.path == null) return null;
+    return File(file.path!).readAsBytes();
   }
 
   // ── Acciones sobre el GeoJSON ──────────────────────────────
@@ -370,10 +409,16 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         .toList();
   }
 
-  List<Map<String, dynamic>> _xlsxRowsAsFeatures(XlsxParseResult parseResult) {
+  List<Map<String, dynamic>> _xlsxRowsAsFeatures(
+    XlsxParseResult parseResult, {
+    int maxRows = _maxStoredXlsxFeatures,
+  }) {
     final out = <Map<String, dynamic>>[];
     for (final hoja in parseResult.hojas) {
       for (final row in hoja.rows) {
+        if (out.length >= maxRows) {
+          return out;
+        }
         out.add({
           'type': 'Feature',
           'properties': {
@@ -387,38 +432,191 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     return out;
   }
 
+  Future<bool> _backendDisponibleParaGeoJson() async {
+    if (!CloudDataConfig.isRemoteDataEnabled) return false;
+    try {
+      await ref
+          .read(prediosRepositoryProvider)
+          .getPredios(limit: 1)
+          .timeout(const Duration(seconds: 2));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _importarGeoJsonEnModoLocal(
+    List<Map<String, dynamic>> features,
+    String nombre, {
+    String? detalle,
+  }) async {
+    final insertadosLocales = ref
+        .read(localPrediosProvider.notifier)
+        .upsertManyFromGeoJsonFeatures(features);
+    ref.invalidate(prediosListProvider);
+    ref.invalidate(prediosMapaProvider);
+
+    final proyectoDetectado = GeoJsonMapper.detectarProyectoDesdeFeatures(features);
+    if (proyectoDetectado != null) {
+      ref.read(gestionProyectoProvider.notifier).state = proyectoDetectado;
+    }
+
+    // Registrar el archivo importado para que aparezca en la lista incluso
+    // cuando el backend no esta disponible.
+    String? bdId;
+    final fileId = const Uuid().v4();
+    try {
+      final archivosRepo = ref.read(localArchivosRepositoryProvider);
+      final saved = await archivosRepo.saveArchivo(
+        customId: fileId,
+        nombre: nombre,
+        features: features,
+        rowCount: features.length,
+        sincronizado: false,
+        encontrados: 0,
+        creados: insertadosLocales,
+        errores: 0,
+      );
+      bdId = saved['id'] as String?;
+    } catch (_) {
+      // Si falla persistencia de archivo, no bloquear la importacion.
+    }
+
+    ref.read(cargaProvider.notifier).addFile(
+      nombre,
+      features,
+      bdId: bdId,
+      guardadoEnBD: bdId != null,
+      sincronizado: false,
+      encontrados: 0,
+      creados: insertadosLocales,
+      errores: 0,
+      rowCount: features.length,
+      fileId: fileId,
+    );
+
+    ref.read(importacionAsyncProvider.notifier).completar(
+      total: features.length,
+      etapa: 'Completado',
+    );
+
+    if (!mounted) return;
+    final prefijo = (detalle == null || detalle.trim().isEmpty)
+        ? 'BD no disponible.'
+        : '$detalle\n';
+    _mostrarSnackBar(
+      '$prefijo$insertadosLocales predio(s) registrados en Gestion local.',
+      exito: true,
+    );
+    context.go('/tabla');
+  }
+
   /// Sincroniza, vincula y persiste en BD; después renderiza en mapa.
   Future<void> _guardarYVerEnMapa() async {
     if (_sincronizando) return;
-    if (_geoJsonData == null) return;
+    if (_geoJsonData == null || _extraerFeatures().isEmpty) {
+      try {
+        debugPrint('[GEOJSON] estado vacio al guardar; reintentando parseo desde archivo seleccionado');
+        final bytes = await _leerBytesArchivoSeleccionado();
+        if (bytes == null) {
+          _mostrarSnackBar('No se pudo leer el archivo para iniciar la importacion.', exito: false);
+          return;
+        }
+        await _parsearGeoJSON(bytes);
+      } catch (e) {
+        _mostrarSnackBar('No se pudo preparar el GeoJSON para importar: $e', exito: false);
+        return;
+      }
+    }
+
+    if (_geoJsonData == null) {
+      _mostrarSnackBar('No hay datos GeoJSON listos para importar.', exito: false);
+      return;
+    }
+
     final features = _extraerFeatures();
-    if (features.isEmpty) return;
+    if (features.isEmpty) {
+      _mostrarSnackBar('El archivo no contiene features validos para importar.', exito: false);
+      return;
+    }
 
     final nombre = _archivoSeleccionado?.name ??
         'archivo_${DateTime.now().millisecondsSinceEpoch}';
 
+    if (features.length >= _geoJsonLocalFirstThreshold) {
+      debugPrint('[GEOJSON] local-first habilitado por volumen: total=${features.length}');
+      setState(() => _sincronizando = true);
+      ref.read(importacionAsyncProvider.notifier).iniciar(
+        total: features.length,
+        etapa: 'Importando local',
+      );
+      try {
+        await _importarGeoJsonEnModoLocal(
+          features,
+          nombre,
+          detalle: 'Importacion local priorizada para archivo grande.',
+        );
+      } finally {
+        if (mounted) {
+          setState(() => _sincronizando = false);
+        }
+      }
+      return;
+    }
+
     setState(() => _sincronizando = true);
     ref.read(importacionAsyncProvider.notifier).iniciar(
       total: features.length,
-      etapa: 'Sincronizando',
+      etapa: 'Validando en BD',
     );
+    debugPrint('[GEOJSON] iniciar guardado/sincronizacion: total=${features.length}, nombre=$nombre');
+
+    final backendDisponible = await _backendDisponibleParaGeoJson();
+    debugPrint('[GEOJSON] backend disponible: $backendDisponible');
+    if (!backendDisponible) {
+      try {
+        debugPrint('[GEOJSON] fallback local por backend no disponible');
+        await _importarGeoJsonEnModoLocal(
+          features,
+          nombre,
+          detalle: 'Backend no disponible.',
+        );
+      } finally {
+        if (mounted) {
+          setState(() => _sincronizando = false);
+        }
+      }
+      return;
+    }
 
     try {
       final syncService = ref.read(sincronizacionServiceProvider);
         // Pre-generar el ID del archivo para usarlo como vínculo en cada predio.
         final archivoId = const Uuid().v4();
+      var firstProgressLogged = false;
 
-      final resultado = await syncService.sincronizar(
-        features,
-        onProgress: (procesados, total) {
-          ref.read(importacionAsyncProvider.notifier).actualizar(
-            procesados: procesados,
-            total: total,
-            etapa: 'Sincronizando',
+      final resultado = await syncService
+          .sincronizar(
+            features,
+            onProgress: (procesados, total) {
+              if (!firstProgressLogged) {
+                firstProgressLogged = true;
+                debugPrint('[GEOJSON] primer progreso recibido: $procesados/$total');
+              }
+              ref.read(importacionAsyncProvider.notifier).actualizar(
+                procesados: procesados,
+                total: total,
+                etapa: 'Sincronizando',
+              );
+            },
+            archivoId: archivoId,
+          )
+          .timeout(
+            _geoJsonSyncTimeout,
+            onTimeout: () => throw TimeoutException(
+              'Sin progreso de sincronizacion remota en ${_geoJsonSyncTimeout.inSeconds}s',
+            ),
           );
-        },
-          archivoId: archivoId,
-      );
 
       if (!mounted) return;
 
@@ -523,39 +721,18 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         }
       }
     } catch (e) {
-      if (!mounted) return;
-      final insertadosLocales = ref
-          .read(localPrediosProvider.notifier)
-          .upsertManyFromGeoJsonFeatures(features);
-      ref.invalidate(prediosListProvider);
-      ref.invalidate(prediosMapaProvider);
-
-      final proyectoDetectado =
-          GeoJsonMapper.detectarProyectoDesdeFeatures(features);
-      if (proyectoDetectado != null) {
-        ref.read(gestionProyectoProvider.notifier).state = proyectoDetectado;
-      }
-
-      if (insertadosLocales > 0) {
-        ref.read(importacionAsyncProvider.notifier).completar(
-          total: features.length,
-          etapa: 'Completado',
-        );
-      } else {
-        ref.read(importacionAsyncProvider.notifier).fallar(
-          procesados: 0,
-          total: features.length,
-          etapa: 'Error',
-          mensaje: e.toString(),
+      debugPrint('[GEOJSON] error en sincronizacion remota, usando fallback local: $e');
+      if (e is TimeoutException && mounted) {
+        _mostrarSnackBar(
+          'La sincronizacion remota tardo demasiado. Continuando en modo local.',
+          exito: false,
         );
       }
-      _mostrarSnackBar(
-        'Error de BD: $e\n$insertadosLocales predio(s) registrados en Gestión local.',
-        exito: insertadosLocales > 0,
+      await _importarGeoJsonEnModoLocal(
+        features,
+        nombre,
+        detalle: 'Error de BD: $e',
       );
-      if (insertadosLocales > 0) {
-        context.go('/tabla');
-      }
     } finally {
       if (mounted) {
         setState(() => _sincronizando = false);
@@ -568,17 +745,42 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     _verEnMapaDesdeArchivo(fileId);
   }
 
+  Future<List<Map<String, dynamic>>> _resolverFeaturesCompletas(
+    ImportedFile file,
+  ) async {
+    if (file.features.length >= file.featureCount && file.features.isNotEmpty) {
+      return file.features;
+    }
+
+    final repo = ref.read(localArchivosRepositoryProvider);
+    final fromId = await repo.getArchivoById(file.id, withFullFeatures: true);
+    final raw = fromId?['features'];
+    if (raw is List) {
+      final loaded = raw
+          .map(_asStringDynamicMap)
+          .whereType<Map<String, dynamic>>()
+          .toList(growable: false);
+      if (loaded.isNotEmpty) {
+        ref.read(cargaProvider.notifier).updateFileFeatures(file.id, loaded);
+        return loaded;
+      }
+    }
+
+    return file.features;
+  }
+
   Future<void> _verEnMapaDesdeArchivo(String fileId) async {
     final importedFiles = ref.read(cargaProvider);
     final file = importedFiles.firstWhere((f) => f.id == fileId);
+    final fullFeatures = await _resolverFeaturesCompletas(file);
     final hydrated = await _rehydrateImportedFeatures(
-      file.features,
+      fullFeatures,
       archivoIds: [
         file.id,
         if (file.bdId != null && file.bdId!.isNotEmpty) file.bdId!,
       ],
     );
-    if (_featuresChanged(file.features, hydrated)) {
+    if (_featuresChanged(fullFeatures, hydrated)) {
       final archivosRepo = ref.read(localArchivosRepositoryProvider);
       await archivosRepo.updateArchivo(
         id: file.id,
@@ -599,14 +801,15 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
   Future<void> _reprocesarArchivo(ImportedFile file) async {
     if (_sincronizando || _eliminando || _loading) return;
-    if (file.features.isEmpty) {
+    final fullFeatures = await _resolverFeaturesCompletas(file);
+    if (fullFeatures.isEmpty) {
       _mostrarSnackBar('El archivo no tiene features para reprocesar.', exito: false);
       return;
     }
 
     setState(() => _sincronizando = true);
     ref.read(importacionAsyncProvider.notifier).iniciar(
-      total: file.features.length,
+      total: fullFeatures.length,
       etapa: 'Reprocesando',
     );
 
@@ -615,7 +818,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
       var archivoIdObjetivo = file.id;
       var resultado = await syncService.sincronizar(
-        file.features,
+        fullFeatures,
         onProgress: (procesados, total) {
           if (!mounted) return;
           ref.read(importacionAsyncProvider.notifier).actualizar(
@@ -637,7 +840,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       if (shouldRetryWithBdId) {
         archivoIdObjetivo = file.bdId!;
         resultado = await syncService.sincronizar(
-          file.features,
+          fullFeatures,
           onProgress: (procesados, total) {
             if (!mounted) return;
             ref.read(importacionAsyncProvider.notifier).actualizar(
@@ -1066,7 +1269,10 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     final parseResult = _xlsxParseResult;
     if (parseResult == null) return;
 
-    final xlsxFeatures = _xlsxRowsAsFeatures(parseResult);
+    final xlsxFeatures = _xlsxRowsAsFeatures(
+      parseResult,
+      maxRows: _maxStoredXlsxFeatures,
+    );
 
     if (!CloudDataConfig.isRemoteDataEnabled) {
       await _inyectarXlsxLocal(parseResult);
@@ -1096,6 +1302,12 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
           'Inyección parcial: ${resultado.creados} creada(s), ${resultado.actualizados} actualizada(s), '
           '${resultado.errores} con error.',
           exito: false,
+        );
+      }
+
+      if (parseResult.totalRows > xlsxFeatures.length) {
+        _mostrarSnackBar(
+          'Se guardó vista previa de ${xlsxFeatures.length} fila(s) para acelerar lectura de importados.',
         );
       }
 
@@ -1323,7 +1535,10 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       // Registrar en la lista de archivos importados
       if (_archivoSeleccionado != null) {
         final fileId = const Uuid().v4();
-        final xlsxFeatures = _xlsxRowsAsFeatures(parseResult);
+        final xlsxFeatures = _xlsxRowsAsFeatures(
+          parseResult,
+          maxRows: _maxStoredXlsxFeatures,
+        );
         String? bdId;
         try {
           final archivosRepo = ref.read(localArchivosRepositoryProvider);
@@ -1667,7 +1882,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                     Text(
                       _archivoSeleccionado != null
                           ? 'Toca para cambiar el archivo'
-                            : 'Formatos: .geojson  .json  .xlsx  .xlsl',
+                            : 'Formatos: .geojson  .json  .xlsx  .xls',
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.textLight),
                     ),
@@ -2035,7 +2250,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
             const SizedBox(height: 28),
             if (_archivoSeleccionado != null &&
-                (_preview.isNotEmpty || _xlsxParseResult != null)) ...[
+              (_preview.isNotEmpty || _xlsxParseResult != null || _geoJsonData != null)) ...[
               // ── Acción única de guardado ───────────────────────
               Container(
                 padding: const EdgeInsets.all(14),

@@ -5,13 +5,38 @@ import '../config/backend_config.dart';
 
 class ApiClient {
   static String get baseUrl => BackendConfig.baseUrl;
+  static const Duration _requestTimeout = Duration(seconds: 8);
+
+  Future<http.Response> _get(Uri uri) {
+    return http.get(uri).timeout(_requestTimeout);
+  }
+
+  Future<http.Response> _post(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+  }) {
+    return http.post(uri, headers: headers, body: body).timeout(_requestTimeout);
+  }
+
+  Future<http.Response> _put(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+  }) {
+    return http.put(uri, headers: headers, body: body).timeout(_requestTimeout);
+  }
+
+  Future<http.Response> _delete(Uri uri) {
+    return http.delete(uri).timeout(_requestTimeout);
+  }
 
   Future<Map<String, dynamic>> importGeoJsonToGis({
     required List<Map<String, dynamic>> features,
     String? archivoId,
     String? proyecto,
   }) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/gis/import-geojson'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -30,7 +55,7 @@ class ApiClient {
     List<String> predioIds = const [],
     List<String> clavesCatastrales = const [],
   }) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/gestion/estatus/batch'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -60,7 +85,7 @@ class ApiClient {
     String? proyecto,
     int? limit,
   }) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/gestion/estatus/viewport'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -96,7 +121,7 @@ class ApiClient {
           'clave_catastral': claveCatastral,
       },
     );
-    final response = await http.get(uri);
+    final response = await _get(uri);
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as List;
     } else {
@@ -105,7 +130,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> getPredio(String id) async {
-    final response = await http.get(Uri.parse('$baseUrl/predios/$id'));
+    final response = await _get(Uri.parse('$baseUrl/predios/$id'));
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } else {
@@ -114,7 +139,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>?> getPredioByClaveCatastral(String clave) async {
-    final response = await http.get(
+    final response = await _get(
       Uri.parse('$baseUrl/predios/by-clave/${Uri.encodeComponent(clave)}'),
     );
     if (response.statusCode == 200) {
@@ -127,7 +152,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> createPredio(Map<String, dynamic> data) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/predios'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(data),
@@ -143,7 +168,7 @@ class ApiClient {
   Future<List<Map<String, dynamic>>> createPrediosBatch(
     List<Map<String, dynamic>> items,
   ) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/predios/batch'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(items),
@@ -157,7 +182,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> updatePredio(String id, Map<String, dynamic> data) async {
-    final response = await http.put(
+    final response = await _put(
       Uri.parse('$baseUrl/predios/$id'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(data),
@@ -170,14 +195,14 @@ class ApiClient {
   }
 
   Future<void> deletePredio(String id) async {
-    final response = await http.delete(Uri.parse('$baseUrl/predios/$id'));
+    final response = await _delete(Uri.parse('$baseUrl/predios/$id'));
     if (response.statusCode != 200) {
       throw Exception('Error al eliminar predio');
     }
   }
 
   Future<Map<String, dynamic>> getEstadisticas() async {
-    final response = await http.get(Uri.parse('$baseUrl/predios/estadisticas'));
+    final response = await _get(Uri.parse('$baseUrl/predios/estadisticas'));
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
