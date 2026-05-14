@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/supabase/supabase_config.dart';
+
 const bool localOnlyAuthMode = true;
 const String localAdminEmail = 'admin@sao.mx';
 const String localAdminPassword = 'admin123';
@@ -23,25 +25,33 @@ final proyectoActivoProvider = StateProvider<String?>((ref) => null);
 
 final localAuthSessionProvider = StateProvider<bool>((ref) => false);
 
+bool get useSupabaseAuth => !localOnlyAuthMode && SupabaseConfig.isConfigured;
+
 // Provider del usuario autenticado
-final authStateProvider = StreamProvider<AuthState>((ref) {
-  return Supabase.instance.client.auth.onAuthStateChange;
+final authStateProvider = StreamProvider<User?>((ref) {
+  if (!useSupabaseAuth) {
+    return Stream<User?>.value(null);
+  }
+  return Supabase.instance.client.auth.onAuthStateChange
+      .map((state) => state.session?.user);
 });
 
 final currentUserProvider = Provider<User?>((ref) {
   final authState = ref.watch(authStateProvider);
   return authState.whenOrNull(
-    data: (state) => state.session?.user,
+    data: (user) => user,
   );
 });
 
 // Provider para operaciones de auth
 final authRepositoryProvider = Provider<AuthRepository>(
-  (ref) => AuthRepository(Supabase.instance.client),
+  (ref) => AuthRepository(
+    useSupabaseAuth ? Supabase.instance.client : null,
+  ),
 );
 
 class AuthRepository {
-  final SupabaseClient _client;
+  final SupabaseClient? _client;
 
   AuthRepository(this._client);
 
@@ -59,7 +69,11 @@ class AuthRepository {
         password == localAdminPassword) {
       return;
     }
-    await _client.auth.signInWithPassword(
+    final client = _client;
+    if (client == null) {
+      throw Exception('Autenticación cloud no configurada.');
+    }
+    await client.auth.signInWithPassword(
       email: email,
       password: password,
     );
@@ -74,7 +88,11 @@ class AuthRepository {
         password == localAdminPassword) {
       return;
     }
-    await _client.auth.signUp(
+    final client = _client;
+    if (client == null) {
+      throw Exception('Autenticación cloud no configurada.');
+    }
+    await client.auth.signUp(
       email: email,
       password: password,
     );
@@ -82,15 +100,21 @@ class AuthRepository {
 
   Future<void> signOut() async {
     if (localOnlyAuthMode) return;
-    await _client.auth.signOut();
+    final client = _client;
+    if (client == null) return;
+    await client.auth.signOut();
   }
 
   Future<void> resetPassword(String email) async {
     if (localOnlyAuthMode) {
       throw Exception('Reset de contrasena no disponible en modo local');
     }
-    await _client.auth.resetPasswordForEmail(email);
+    final client = _client;
+    if (client == null) {
+      throw Exception('Autenticación cloud no configurada.');
+    }
+    await client.auth.resetPasswordForEmail(email);
   }
 
-  User? get currentUser => _client.auth.currentUser;
+  User? get currentUser => _client?.auth.currentUser;
 }

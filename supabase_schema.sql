@@ -218,6 +218,34 @@ CREATE INDEX IF NOT EXISTS idx_predios_proyecto       ON predios(proyecto);
 
 -- ============================================================
 -- 10. RPC: Endpoint lógico /api/predios/vincular
+
+-- ============================================================
+-- 11. Tabla de usuarios para módulo Estructura
+-- ============================================================
+CREATE TABLE IF NOT EXISTS usuarios_estructura (
+  id               TEXT        PRIMARY KEY,
+  nombre           TEXT        NOT NULL,
+  correo           TEXT        NOT NULL,
+  perfil           TEXT        NOT NULL CHECK (perfil IN ('administrador', 'colaborador')),
+  proyecto         TEXT,
+  ultima_operacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_usuarios_estructura_correo ON usuarios_estructura(correo);
+CREATE INDEX IF NOT EXISTS idx_usuarios_estructura_perfil ON usuarios_estructura(perfil);
+
+ALTER TABLE usuarios_estructura ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Ver usuarios_estructura"
+  ON usuarios_estructura FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Crear usuarios_estructura"
+  ON usuarios_estructura FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Actualizar usuarios_estructura"
+  ON usuarios_estructura FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "Eliminar usuarios_estructura"
+  ON usuarios_estructura FOR DELETE TO authenticated USING (true);
 -- Permite vincular manualmente un polígono con un registro de Gestión.
 -- Payload equivalente:
 -- {"id_poligono":"...", "id_gestion":"...", "geometry":{...}}

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_strings.dart';
+import '../../features/auth/providers/user_management_provider.dart';
 
-class AppScaffold extends StatelessWidget {
+class AppScaffold extends ConsumerWidget {
   final Widget child;
   final int currentIndex;
   final String title;
@@ -19,15 +21,22 @@ class AppScaffold extends StatelessWidget {
     this.floatingActionButton,
   });
 
-  static const _navItems = [
-    (icon: Icons.map_outlined, label: AppStrings.mapa, route: '/mapa'),
-    (icon: Icons.analytics_outlined, label: 'Balance', route: '/reportes'),
-    (icon: Icons.upload_file_outlined, label: 'Archivos', route: '/carga'),
-    (icon: Icons.folder_outlined, label: 'Gestion', route: '/tabla'),
-  ];
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final canAccessEstructura = ref.watch(canAccessEstructuraProvider);
+    final navItems = <({IconData icon, String label, String route})>[
+      (icon: Icons.map_outlined, label: AppStrings.mapa, route: '/mapa'),
+      (icon: Icons.folder_outlined, label: 'Gestion', route: '/tabla'),
+      (icon: Icons.analytics_outlined, label: 'Balance', route: '/reportes'),
+      (icon: Icons.upload_file_outlined, label: 'Archivos', route: '/carga'),
+      (icon: Icons.person_outline, label: 'Perfil', route: '/perfil'),
+      if (canAccessEstructura)
+        (icon: Icons.settings_outlined, label: 'Estructura', route: '/estructura'),
+    ];
+
+    final selectedIndex =
+        currentIndex >= 0 && currentIndex < navItems.length ? currentIndex : 0;
+
     final width = MediaQuery.of(context).size.width;
     final isWide = width > 768;
     final isVeryWide = width > 1200;
@@ -40,8 +49,11 @@ class AppScaffold extends StatelessWidget {
           children: [
             NavigationRail(
               extended: isVeryWide,
-              selectedIndex: currentIndex,
-              onDestinationSelected: (i) => context.go(_navItems[i].route),
+              selectedIndex: selectedIndex,
+              onDestinationSelected: (i) {
+                ref.read(userManagementProvider.notifier).markCurrentUserOperation();
+                context.go(navItems[i].route);
+              },
               labelType: isVeryWide
                   ? NavigationRailLabelType.none
                   : NavigationRailLabelType.all,
@@ -60,7 +72,7 @@ class AppScaffold extends StatelessWidget {
                   ],
                 ),
               ),
-              destinations: _navItems
+                destinations: navItems
                   .map((item) => NavigationRailDestination(
                         icon: Icon(item.icon),
                         selectedIcon: Icon(
@@ -83,10 +95,13 @@ class AppScaffold extends StatelessWidget {
       appBar: AppBar(title: Text(title), actions: actions),
       body: child,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: currentIndex,
-        onDestinationSelected: (i) => context.go(_navItems[i].route),
+        selectedIndex: selectedIndex,
+        onDestinationSelected: (i) {
+          ref.read(userManagementProvider.notifier).markCurrentUserOperation();
+          context.go(navItems[i].route);
+        },
         labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
-        destinations: _navItems
+        destinations: navItems
             .map((item) => NavigationDestination(
                   icon: Icon(item.icon),
                   selectedIcon: Icon(item.icon, color: AppColors.primary),

@@ -1,9 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../features/auth/presentation/login_screen.dart';
 import '../../features/auth/providers/auth_provider.dart';
+import '../../features/auth/providers/user_management_provider.dart';
+import '../../features/estructura/presentation/estructura_screen.dart';
 import '../../features/mapa/presentation/mapa_screen.dart';
+import '../../features/perfil/presentation/perfil_screen.dart';
 import '../../features/predios/presentation/predios_list_screen.dart';
 import '../../features/predios/presentation/predio_detail_screen.dart';
 import '../../features/predios/presentation/predio_form_screen.dart';
@@ -19,17 +21,20 @@ import '../../features/tabla/presentation/gestion_predio_detail_screen.dart';
 final routerProvider = Provider<GoRouter>((ref) {
   // Observar cambios de auth para refrescar el redirect
   ref.watch(authStateProvider);
+  final user = ref.watch(currentUserProvider);
   final localSession = ref.watch(localAuthSessionProvider);
+  final canAccessEstructura = ref.watch(canAccessEstructuraProvider);
 
   return GoRouter(
     initialLocation: '/mapa',
     redirect: (context, state) {
-      final user = Supabase.instance.client.auth.currentUser;
       final isLoggedIn = user != null || localSession;
       final isLoginRoute = state.matchedLocation == '/login';
+      final isEstructuraRoute = state.matchedLocation.startsWith('/estructura');
 
       if (!isLoggedIn && !isLoginRoute) return '/login';
       if (isLoggedIn && isLoginRoute) return '/mapa';
+      if (isEstructuraRoute && !canAccessEstructura) return '/mapa';
       return null;
     },
     routes: [
@@ -121,6 +126,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/proyectos',
         builder: (_, __) => const ProyectosScreen(),
+      ),
+      GoRoute(
+        path: '/perfil',
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: PerfilScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/estructura',
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: EstructuraScreen(),
+        ),
       ),
     ],
   );

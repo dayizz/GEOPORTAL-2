@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
+import '../providers/user_management_provider.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_strings.dart';
 
@@ -43,6 +44,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         if (email == localAdminEmail && password == localAdminPassword) {
           ref.read(localAuthSessionProvider.notifier).state = true;
           ref.read(proyectoActivoProvider.notifier).state = null;
+          ref.read(userManagementProvider.notifier).setCurrentSessionUser(
+                correo: email,
+                nombre: 'Administrador General',
+                perfil: UserProfile.administrador,
+              );
           if (mounted) context.go('/');
           return;
         }
@@ -51,6 +57,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           if (proyecto != null) {
             ref.read(localAuthSessionProvider.notifier).state = true;
             ref.read(proyectoActivoProvider.notifier).state = proyecto;
+            ref.read(userManagementProvider.notifier).setCurrentSessionUser(
+                  correo: email,
+                  nombre: 'Colaborador $proyecto',
+                  perfil: UserProfile.colaborador,
+                  proyecto: proyecto,
+                );
             if (mounted) context.go('/mapa');
             return;
           }
@@ -73,6 +85,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         await auth.signInWithEmail(_emailCtrl.text.trim(), _passCtrl.text);
         final proyecto = extractProyectoFromPassword(_passCtrl.text);
         ref.read(proyectoActivoProvider.notifier).state = proyecto;
+        ref.read(userManagementProvider.notifier).setCurrentSessionUser(
+              correo: email,
+              nombre: _displayNameFromEmail(email),
+              perfil: proyecto == null
+                  ? UserProfile.administrador
+                  : UserProfile.colaborador,
+              proyecto: proyecto,
+            );
         if (mounted) context.go('/');
       }
     } catch (e) {
@@ -87,6 +107,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  String _displayNameFromEmail(String email) {
+    final prefix = email.split('@').first.trim();
+    if (prefix.isEmpty) return 'Usuario';
+    final normalized = prefix.replaceAll('.', ' ').replaceAll('_', ' ');
+    return normalized
+        .split(' ')
+        .where((p) => p.isNotEmpty)
+        .map((p) => p[0].toUpperCase() + p.substring(1))
+        .join(' ');
   }
 
   @override
