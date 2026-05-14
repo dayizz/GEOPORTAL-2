@@ -71,7 +71,7 @@ class ImportacionAsyncNotifier extends AsyncNotifier<ImportacionUiState> {
 	Timer? _processingWatchdog;
 
 	static const Duration _autoResetDelay = Duration(seconds: 5);
-	static const Duration _processingWatchdogDelay = Duration(seconds: 45);
+	static const Duration _processingWatchdogDelay = Duration(seconds: 120);
 
 	void _cancelTimers() {
 		_autoResetTimer?.cancel();

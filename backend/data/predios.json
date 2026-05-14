@@ -162041,62 +162041,6 @@
     "municipio": "Lampazos de Naranjo"
   },
   {
-    "id": "imp-811566f23891b067",
-    "clave_catastral": "SNL-LAM-002",
-    "tramo": "TSNL",
-    "tipo_propiedad": "PRIVADA",
-    "proyecto": "TSNL",
-    "archivo_id": "TSNL-131617",
-    "cop": false,
-    "identificacion": false,
-    "levantamiento": false,
-    "negociacion": false,
-    "poligono_insertado": true,
-    "geometry": {
-      "type": "MultiPolygon",
-      "coordinates": [
-        [
-          [
-            [
-              -100.4903,
-              26.763555,
-              0.0
-            ],
-            [
-              -100.498109,
-              26.760845,
-              0.0
-            ],
-            [
-              -100.498713,
-              26.768048,
-              0.0
-            ],
-            [
-              -100.501316,
-              26.799111,
-              0.0
-            ],
-            [
-              -100.490384,
-              26.806092,
-              0.0
-            ],
-            [
-              -100.4903,
-              26.763555,
-              0.0
-            ]
-          ]
-        ]
-      ]
-    },
-    "created_at": "2026-05-09T00:47:12.936033+00:00",
-    "updated_at": "2026-05-09T00:47:12.936033+00:00",
-    "estatus": "NO LIBERADO",
-    "municipio": "Lampazos de Naranjo"
-  },
-  {
     "id": "imp-9d6e22d4f525eef2",
     "clave_catastral": "TSNL-000528",
     "tramo": "TSNL",
