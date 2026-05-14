@@ -150,7 +150,10 @@ class PrediosRepository {
   }) async {
     // Si hay ApiClient, usar backend FastAPI
     if (_apiClient != null) {
-      final data = await _apiClient.getPredios();
+      final data = await _apiClient.getPredios(
+        proyecto: null,
+        claveCatastral: busqueda,
+      );
       return data.map((e) => Predio.fromMap(e as Map<String, dynamic>)).toList();
     }
     // ...existing code...
@@ -289,6 +292,38 @@ class PrediosRepository {
     return Predio.fromMap(response);
   }
 
+  /// Inserta múltiples predios en una sola operación atómica.
+  /// Para el backend local usa el endpoint /predios/batch.
+  /// Para Supabase hace un insert múltiple.
+  Future<List<Predio>> createPrediosBatch(
+    List<Map<String, dynamic>> items,
+  ) async {
+    if (items.isEmpty) return [];
+
+    if (_apiClient != null) {
+      final saved = await _apiClient.createPrediosBatch(items);
+      return saved.map((m) => Predio.fromMap(m)).toList();
+    }
+
+    if (_usingSheets) {
+      // Sheets no tiene batch nativo: fallback secuencial.
+      final results = <Predio>[];
+      for (final item in items) {
+        results.add(await createPredio(item));
+      }
+      return results;
+    }
+
+    final response = await _client
+        .from('predios')
+        .insert(items)
+        .select('*, propietarios(*)');
+
+    return (response as List)
+        .map((m) => Predio.fromMap(m as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<Predio> updatePredio(String id, Map<String, dynamic> data) async {
     if (_apiClient != null) {
       final saved = await _apiClient.updatePredio(id, data);
@@ -335,6 +370,42 @@ class PrediosRepository {
     }
     await _client.from('predios').delete().eq('id', id);
   }
+
+    /// Devuelve todos los predios cuyo `archivo_id` coincide con el dado.
+    Future<List<Predio>> getPrediosByArchivoId(String archivoId) async {
+      if (_apiClient != null) {
+        final all = await getPredios(limit: 100000);
+        return all.where((p) => p.archivoId == archivoId).toList();
+      }
+      if (_usingSheets) {
+        final all = await getPredios(limit: 100000);
+        return all.where((p) => p.archivoId == archivoId).toList();
+      }
+      final response = await _client
+          .from('predios')
+            .select('*, propietarios(*)')
+          .eq('archivo_id', archivoId);
+      return (response as List).map((e) => Predio.fromMap(e)).toList();
+    }
+
+    /// Elimina todos los predios cuyo `archivo_id` coincide con el dado.
+    Future<void> deletePrediosByArchivoId(String archivoId) async {
+      if (_apiClient != null) {
+        final predios = await getPrediosByArchivoId(archivoId);
+        for (final p in predios) {
+          try { await deletePredio(p.id); } catch (_) {}
+        }
+        return;
+      }
+      if (_usingSheets) {
+        final predios = await getPrediosByArchivoId(archivoId);
+        for (final p in predios) {
+          try { await deletePredio(p.id); } catch (_) {}
+        }
+        return;
+      }
+      await _client.from('predios').delete().eq('archivo_id', archivoId);
+    }
 
   Future<List<Predio>> getPrediosConGeometria() async {
     if (_apiClient != null) {

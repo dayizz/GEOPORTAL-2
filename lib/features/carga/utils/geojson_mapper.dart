@@ -32,11 +32,14 @@ class GeoJsonMapper {
       'tramo', 'TRAMO',
       'tramo_vial', 'TRAMO_VIAL',
       'seccion', 'SECCION',
+      'segmento', 'SEGMENTO',
+      'frente', 'FRENTE',
     ],
     'tipo_propiedad': [
       'tipo_propiedad', 'TIPO_PROPIEDAD',
       'tipopropiedad',  'tipo', 'TIPO',
       'regimen',        'REGIMEN',
+      'tipo de propiedad', 'TIPO DE PROPIEDAD',
     ],
     'ejido': [
       'ejido', 'EJIDO',
@@ -49,12 +52,14 @@ class GeoJsonMapper {
       'nom_propietario', 'NOM_PROPIETARIO',
       'titular', 'TITULAR',
       'nombre',
+      'propietario o parcela', 'PROPIETARIO O PARCELA',
     ],
     'superficie': [
       'superficie', 'SUPERFICIE',
       'area', 'AREA',
       'shape_area', 'SHAPE_AREA',
       'area_m2', 'area_ha',
+      'm2', 'M2',
     ],
     'uso_suelo': [
       'uso_suelo', 'USO_SUELO',
@@ -111,16 +116,27 @@ class GeoJsonMapper {
     'km_inicio': [
       'km_inicio', 'KM_INICIO',
       'cadenamiento_inicial', 'cad_ini', 'km_i',
+      'km iniicio', 'KM INIICIO',
+      'km inicio', 'KM INICIO',
     ],
     'km_fin': [
       'km_fin', 'KM_FIN',
       'cadenamiento_final', 'cad_fin', 'km_f',
+      'km fin', 'KM FIN',
     ],
     'km_lineales': [
       'km_lineales', 'KM_LINEALES',
       'longitud_km', 'longitud',
+      'km lineales', 'KM LINEALES',
     ],
-    'km_efectivos': ['km_efectivos', 'KM_EFECTIVOS'],
+    'km_efectivos': ['km_efectivos', 'KM_EFECTIVOS', 'km efectivos', 'KM EFECTIVOS'],
+    'estatus': [
+      'estatus', 'ESTATUS',
+      'estatus_predio', 'ESTATUS_PREDIO',
+      'estado_predio', 'situacion',
+      'status', 'estatus_juridico',
+      'liberacion', 'estado_liberacion',
+    ],
     'latitud':  ['latitud', 'lat', 'LAT', 'latitude'],
     'longitud': ['longitud', 'lon', 'lng', 'LON', 'longitude'],
     'rfc':  ['rfc', 'RFC'],
@@ -200,30 +216,117 @@ class GeoJsonMapper {
   /// Las claves canónicas tienen precedencia sobre las originales.
   static Map<String, dynamic> normalizeProperties(Map<String, dynamic> props) {
     final result = Map<String, dynamic>.from(props);
+    final normalizedLookup = <String, dynamic>{};
+    final normalizedOriginalKey = <String, String>{};
+
+    for (final prop in props.entries) {
+      final normalizedKey = _normalizeKey(prop.key);
+      if (normalizedKey.isEmpty) continue;
+      normalizedLookup.putIfAbsent(normalizedKey, () => prop.value);
+      normalizedOriginalKey.putIfAbsent(normalizedKey, () => prop.key);
+    }
+
+    bool isNullLike(dynamic value) {
+      if (value == null) return true;
+      final text = value.toString().trim();
+      return text.isEmpty || text == 'null';
+    }
 
     for (final entry in _keyAliases.entries) {
       final canonicalKey = entry.key;
       dynamic selected = result[canonicalKey];
 
-      if (selected == null || selected.toString().trim().isEmpty || selected.toString() == 'null') {
+      if (isNullLike(selected)) {
+        final canonicalNormalized = _normalizeKey(canonicalKey);
+        if (normalizedLookup.containsKey(canonicalNormalized)) {
+          selected = normalizedLookup[canonicalNormalized];
+        }
+      }
+
+      if (isNullLike(selected)) {
         for (final alias in entry.value) {
-          final value = props[alias];
-          if (value != null) {
-            final str = value.toString().trim();
-            if (str.isNotEmpty && str != 'null') {
-              selected = value;
-              break;
-            }
+          final aliasNormalized = _normalizeKey(alias);
+          final exactValue = props[alias];
+          final value = exactValue ?? normalizedLookup[aliasNormalized];
+          if (isNullLike(value)) continue;
+
+          final sourceKey = exactValue != null
+              ? alias
+              : (normalizedOriginalKey[aliasNormalized] ?? alias);
+          if (canonicalKey == 'tramo') {
+            selected = _normalizeTramoTsfFromAlias(sourceKey, value);
+          } else {
+            selected = value;
+          }
+          break;
+        }
+
+        // Fallback flexible para claves no estandarizadas como
+        // "segmento_num", "frente_id" o "tramo_no".
+        if (selected == null && canonicalKey == 'tramo') {
+          for (final prop in props.entries) {
+            final keyNorm = _normalizeKey(prop.key);
+            final looksLikeTramo = keyNorm.contains('tramo') ||
+                keyNorm.contains('segmento') ||
+                keyNorm.contains('frente');
+            if (!looksLikeTramo) continue;
+            final raw = prop.value?.toString().trim();
+            if (raw == null || raw.isEmpty || raw == 'null') continue;
+            selected = _normalizeTramoTsfFromAlias(prop.key, prop.value);
+            break;
           }
         }
       }
 
-      if (selected != null) {
-        result[canonicalKey] = _normalizeCanonicalValue(canonicalKey, selected);
+      if (!isNullLike(selected)) {
+        if (canonicalKey == 'tramo') {
+          result[canonicalKey] = _normalizeTramoTsfValue(selected);
+        } else {
+          result[canonicalKey] = _normalizeCanonicalValue(canonicalKey, selected);
+        }
       }
     }
 
     return result;
+  }
+
+  static String _normalizeTramoTsfFromAlias(String alias, dynamic value) {
+    final normAlias = _normalizeKey(alias);
+    if (normAlias.contains('segmento')) {
+      return _normalizeTramoTsfValue(value, defaultPrefix: 'S');
+    }
+    if (normAlias.contains('frente')) {
+      return _normalizeTramoTsfValue(value, defaultPrefix: 'F');
+    }
+    return _normalizeTramoTsfValue(value, defaultPrefix: 'T');
+  }
+
+  static String _normalizeTramoTsfValue(dynamic value, {String defaultPrefix = 'T'}) {
+    final raw = _normalizeSpaces(value?.toString() ?? '').toUpperCase();
+    if (raw.isEmpty || raw == 'NULL') return '${defaultPrefix}1';
+
+    // Formato ya correcto: T1, S2, F3, con separadores opcionales.
+    final direct = RegExp(r'^([TSF])\s*[-_]?\s*(\d{1,2})$').firstMatch(raw);
+    if (direct != null) {
+      return '${direct.group(1)}${int.parse(direct.group(2)!)}';
+    }
+
+    // Valores textuales: "TRAMO 2", "SEGMENTO-4", "FRENTE_1".
+    final prefijoPorTexto = raw.contains('SEGMENTO')
+        ? 'S'
+        : (raw.contains('FRENTE') ? 'F' : (raw.contains('TRAMO') ? 'T' : defaultPrefix));
+    final numero = RegExp(r'(\d{1,2})').firstMatch(raw)?.group(1);
+    if (numero != null) {
+      return '$prefijoPorTexto${int.parse(numero)}';
+    }
+
+    // Número puro: usar el prefijo según el campo fuente.
+    final numOnly = RegExp(r'^\d{1,2}$').hasMatch(raw);
+    if (numOnly) {
+      return '$defaultPrefix${int.parse(raw)}';
+    }
+
+    return '${defaultPrefix}1';
   }
 
   static dynamic _normalizeCanonicalValue(String key, dynamic value) {
@@ -241,6 +344,8 @@ class GeoJsonMapper {
         return _normalizeProyecto(text);
       case 'tipo_propiedad':
         return _normalizeTipoPropiedad(text);
+      case 'estatus':
+        return _normalizeEstatus(text);
       default:
         return text;
     }
@@ -261,6 +366,27 @@ class GeoJsonMapper {
     if (upper.contains('SOC')) return 'SOCIAL';
     if (upper.contains('PRI')) return 'PRIVADA';
     return upper;
+  }
+
+  static String _normalizeEstatus(String value) {
+    final text = _normalizeSpaces(value).toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u');
+    if (text.contains('no liberad') ||
+        text.contains('pendiente') ||
+        text.contains('en proceso') ||
+        text == 'no' ||
+        text == 'false' ||
+        text == '0') {
+      return 'No liberado';
+    }
+    if (text.contains('liberad') || text == 'si' || text == 'true' || text == '1') {
+      return 'Liberado';
+    }
+    return 'Sin estatus';
   }
 
   /// Intenta detectar el proyecto a partir de las properties normalizadas.

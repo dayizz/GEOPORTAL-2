@@ -16,7 +16,7 @@ Future<void> main() async {
       size: Size(1280, 800),
       minimumSize: Size(900, 620),
       center: true,
-      title: 'Geoportal Predios',
+      title: 'Geoportal de Gestion',
     );
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();

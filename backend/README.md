@@ -25,8 +25,84 @@ Este backend provee una API RESTful para la gestión de predios y recursos del G
 - `GET /predios` — Lista todos los predios
 - `GET /predios/{predio_id}` — Detalle de un predio
 - `POST /predios` — Crear un predio
+- `POST /predios/batch` — Inserta/actualiza múltiples predios
 - `PUT /predios/{predio_id}` — Actualizar un predio
 - `DELETE /predios/{predio_id}` — Eliminar un predio
+
+## Endpoints GIS (base local)
+
+- `GET /gis/predios` — Lista capa GIS local persistida
+- `POST /gis/import-geojson` — Importa features GeoJSON a capa GIS local (upsert por `predio_id`)
+
+Contrato mínimo para `POST /gis/import-geojson`:
+
+```json
+{
+   "archivo_id": "imp_20260508_001",
+   "proyecto": "TQI",
+   "features": [
+      {
+         "type": "Feature",
+         "geometry": { "type": "Polygon", "coordinates": [] },
+         "properties": {
+            "predio_id": "p_001",
+            "clave_catastral": "ABC-001"
+         }
+      }
+   ]
+}
+```
+
+## Endpoints de estatus COP/TEC
+
+- `GET /gestion/estatus?predio_ids=p_001,p_002`
+- `GET /gestion/estatus?claves_catastrales=ABC-001,ABC-002`
+- `POST /gestion/estatus/batch`
+- `POST /gestion/estatus/viewport`
+
+Contrato sugerido para batch:
+
+```json
+{
+   "predio_ids": ["p_001", "p_002"],
+   "claves_catastrales": ["ABC-001", "ABC-002"]
+}
+```
+
+Respuesta:
+
+```json
+{
+   "items": [
+      {
+         "predio_id": "p_001",
+         "clave_catastral": "ABC-001",
+         "cop": true,
+         "identificacion": true,
+         "levantamiento": true,
+         "negociacion": false,
+         "estatus": "Liberado",
+         "cops_tec_ref": null,
+         "updated_at": "2026-05-08T19:20:00Z"
+      }
+   ]
+}
+```
+
+Contrato sugerido para viewport:
+
+```json
+{
+   "bbox": {
+      "west": -100.7,
+      "south": 20.4,
+      "east": -100.1,
+      "north": 20.9
+   },
+   "proyecto": "TQI",
+   "limit": 5000
+}
+```
 
 ## Integración Flutter
 

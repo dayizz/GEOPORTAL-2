@@ -1,5 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/supabase/supabase_config.dart';
+import '../../../core/config/cloud_data_config.dart';
 import '../data/propietarios_repository.dart';
 import '../../../features/predios/models/propietario.dart';
 import '../../predios/models/predio.dart';
@@ -16,7 +16,7 @@ final propietariosListProvider = FutureProvider<List<Propietario>>((ref) async {
   final repo = ref.read(propietariosRepositoryProvider);
 
   List<Propietario> remotos = const [];
-  if (SupabaseConfig.isConfigured) {
+  if (CloudDataConfig.isRemoteDataEnabled) {
     try {
       remotos = await repo.getPropietarios(busqueda: busqueda, limit: 500);
     } catch (_) {
@@ -116,7 +116,7 @@ final propietarioDetalleProvider =
     if (local.id == id) return local;
   }
 
-  if (!SupabaseConfig.isConfigured) {
+  if (!CloudDataConfig.isRemoteDataEnabled) {
     return null;
   }
 

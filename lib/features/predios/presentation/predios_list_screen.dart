@@ -72,7 +72,10 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
                         filtros.copyWith(busqueda: v);
                   },
                 ),
-                if (filtros.proyecto != null || filtros.usoSuelo != null || filtros.zona != null) ...[
+                if (filtros.proyecto != null ||
+                    filtros.usoSuelo != null ||
+                    filtros.zona != null ||
+                    (filtros.segmento?.trim().isNotEmpty ?? false)) ...[
                   const SizedBox(height: 8),
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -95,6 +98,12 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
                             'Zona: ${filtros.zona}',
                             () => ref.read(prediosFiltrosProvider.notifier).state =
                                 filtros.copyWith(clearZona: true),
+                          ),
+                        if (filtros.segmento != null && filtros.segmento!.trim().isNotEmpty)
+                          _buildFiltroChip(
+                            'Segmento: ${filtros.segmento}',
+                            () => ref.read(prediosFiltrosProvider.notifier).state =
+                                filtros.copyWith(clearSegmento: true),
                           ),
                       ],
                     ),
@@ -139,6 +148,12 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
 
   Widget _buildPredioCard(Predio predio) {
     final color = AppColors.tipoPropiedadColor(predio.tipoPropiedad);
+    final estatus = predio.estatusGestion;
+    final estatusColor = estatus == 'Liberado'
+      ? AppColors.liberadoColor
+      : estatus == 'No liberado'
+        ? AppColors.noLiberadoColor
+        : AppColors.textSecondary;
     final pct = (predio.porcentajeAvance * 100).round();
 
     return Card(
@@ -179,6 +194,8 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
                     const SizedBox(height: 6),
                     Row(
                       children: [
+                        _buildTag(estatus, estatusColor),
+                        const SizedBox(width: 6),
                         _buildTag(predio.tipoPropiedad, color),
                         const SizedBox(width: 6),
                         if (predio.cop)
@@ -286,6 +303,7 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
     String? usoTmp = filtros.usoSuelo;
     String? zonaTmp = filtros.zona;
     String? proyectoTmp = filtros.proyecto;
+    final segmentoCtrl = TextEditingController(text: filtros.segmento ?? '');
 
     showModalBottomSheet(
       context: context,
@@ -314,6 +332,16 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
                     onSelected: (v) => setModalState(() => proyectoTmp = v ? proyecto : null),
                   );
                 }).toList(),
+              ),
+              const SizedBox(height: 20),
+              Text('Segmento', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 10),
+              TextField(
+                controller: segmentoCtrl,
+                decoration: const InputDecoration(
+                  hintText: 'Ej. S1, SEGMENTO-2',
+                  prefixIcon: Icon(Icons.route_outlined),
+                ),
               ),
               const SizedBox(height: 20),
               Text('Tipo de Propiedad', style: Theme.of(context).textTheme.titleMedium),
@@ -353,6 +381,7 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
                       onPressed: () {
                         ref.read(prediosFiltrosProvider.notifier).state =
                             const PrediosFiltros();
+                        segmentoCtrl.dispose();
                         Navigator.pop(ctx);
                       },
                       child: const Text('Limpiar'),
@@ -362,15 +391,19 @@ class _PrediosListScreenState extends ConsumerState<PrediosListScreen> {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () {
+                        final segmento = segmentoCtrl.text.trim();
                         ref.read(prediosFiltrosProvider.notifier).state =
                             filtros.copyWith(
                           usoSuelo: usoTmp,
                           zona: zonaTmp,
                           proyecto: proyectoTmp,
+                          segmento: segmento.isEmpty ? null : segmento,
                           clearUsoSuelo: usoTmp == null,
                           clearZona: zonaTmp == null,
                           clearProyecto: proyectoTmp == null,
+                          clearSegmento: segmento.isEmpty,
                         );
+                        segmentoCtrl.dispose();
                         Navigator.pop(ctx);
                       },
                       child: const Text('Aplicar'),

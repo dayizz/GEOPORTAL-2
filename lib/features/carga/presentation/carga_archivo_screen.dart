@@ -7,10 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:uuid/uuid.dart';
 import '../../../core/constants/app_colors.dart';
-import '../../../core/supabase/supabase_config.dart';
+import '../../../core/config/cloud_data_config.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../mapa/providers/mapa_provider.dart';
+import '../../predios/data/predios_repository.dart';
 import '../../predios/providers/predios_provider.dart';
 import '../../predios/providers/local_predios_provider.dart';
 import '../../predios/models/predio.dart';
@@ -34,6 +36,11 @@ class CargaArchivoScreen extends ConsumerStatefulWidget {
 class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   bool _loading = false;
   bool _sincronizando = false;
+  bool _eliminando = false;
+  String? _archivoEliminandoId;
+  int _eliminacionProcesados = 0;
+  int _eliminacionTotal = 0;
+  String _etapaEliminacion = 'Preparando eliminación...';
   List<Map<String, dynamic>> _preview = [];
   PlatformFile? _archivoSeleccionado;
   Map<String, dynamic>? _geoJsonData;
@@ -43,18 +50,94 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   Map<String, int> _camposDetectados = {};
   int _totalFeatures = 0;
 
+  IconData _iconoEstadoImportacion(ImportacionEstado estado) {
+    switch (estado) {
+      case ImportacionEstado.procesando:
+        return Icons.sync;
+      case ImportacionEstado.completado:
+        return Icons.check_circle;
+      case ImportacionEstado.error:
+        return Icons.error_outline;
+      case ImportacionEstado.idle:
+        return Icons.hourglass_empty;
+    }
+  }
+
+  Color _colorEstadoImportacion(ImportacionEstado estado) {
+    switch (estado) {
+      case ImportacionEstado.procesando:
+        return AppColors.info;
+      case ImportacionEstado.completado:
+        return AppColors.secondary;
+      case ImportacionEstado.error:
+        return AppColors.danger;
+      case ImportacionEstado.idle:
+        return AppColors.textLight;
+    }
+  }
+
+  String _tituloEstadoImportacion(ImportacionEstado estado, String? etapa) {
+    final etapaLimpia = (etapa ?? '').trim();
+    switch (estado) {
+      case ImportacionEstado.procesando:
+        return etapaLimpia.isNotEmpty ? etapaLimpia : 'Procesando importación';
+      case ImportacionEstado.completado:
+        return 'Importación completada';
+      case ImportacionEstado.error:
+        return 'Importación con errores';
+      case ImportacionEstado.idle:
+        return 'Sin importación activa';
+    }
+  }
+
   void _mostrarSnackBar(String mensaje, {bool exito = true}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.removeCurrentSnackBar();
+    messenger.showSnackBar(
       SnackBar(
         content: Text(mensaje),
         backgroundColor: exito ? null : AppColors.danger,
-        duration: Duration(seconds: exito ? 5 : 8),
+        duration: Duration(seconds: exito ? 3 : 4),
       ),
     );
   }
 
   bool _yaCargoDesdeDB = false;
+
+  void _iniciarEliminacion({
+    required int total,
+    String? fileId,
+    String etapa = 'Preparando eliminación...',
+  }) {
+    setState(() {
+      _eliminando = true;
+      _archivoEliminandoId = fileId;
+      _eliminacionTotal = total;
+      _eliminacionProcesados = 0;
+      _etapaEliminacion = etapa;
+    });
+  }
+
+  void _actualizarEliminacion({required int procesados, required String etapa}) {
+    if (!mounted) return;
+    setState(() {
+      _eliminacionProcesados = procesados;
+      _etapaEliminacion = etapa;
+    });
+  }
+
+  void _finalizarEliminacion() {
+    if (!mounted) return;
+    setState(() {
+      _eliminando = false;
+      _archivoEliminandoId = null;
+      _eliminacionProcesados = 0;
+      _eliminacionTotal = 0;
+      _etapaEliminacion = 'Preparando eliminación...';
+    });
+  }
 
   @override
   void initState() {
@@ -77,16 +160,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     try {
       final repo = ref.read(localArchivosRepositoryProvider);
       final rawList = await repo.getArchivos();
-      final bdFiles = rawList
-          .map((m) {
-            try {
-              return ImportedFile.fromBD(m);
-            } catch (_) {
-              return null;
-            }
-          })
-          .whereType<ImportedFile>()
-          .toList();
+      final bdFiles = await _rehydrateImportedFilesOnLoad(rawList);
       if (!mounted) return;
       ref.read(cargaProvider.notifier).initFromBD(bdFiles);
       _yaCargoDesdeDB = true;
@@ -94,6 +168,80 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       // ignore: avoid_print
       debugPrint('Error cargando archivos desde Firestore: $e');
     }
+  }
+
+  Future<List<ImportedFile>> _rehydrateImportedFilesOnLoad(
+    List<Map<String, dynamic>> rawList,
+  ) async {
+    final parsed = rawList
+        .map((m) {
+          try {
+            return ImportedFile.fromBD(m);
+          } catch (_) {
+            return null;
+          }
+        })
+        .whereType<ImportedFile>()
+        .toList(growable: false);
+
+    final needsHydration = parsed.any(
+      (file) => file.sincronizado && file.features.isNotEmpty,
+    );
+    if (!needsHydration) {
+      return parsed;
+    }
+
+    final predios = await ref.read(prediosMapaProvider.future);
+    final byId = <String, Predio>{
+      for (final predio in predios) predio.id: predio,
+    };
+    final byClave = <String, Predio>{
+      for (final predio in predios)
+        if (predio.claveCatastral.trim().isNotEmpty)
+          predio.claveCatastral.trim().toUpperCase(): predio,
+    };
+    final byArchivoId = <String, List<Predio>>{};
+    for (final predio in predios) {
+      final archivoId = predio.archivoId?.trim();
+      if (archivoId == null || archivoId.isEmpty) continue;
+      byArchivoId.putIfAbsent(archivoId, () => <Predio>[]).add(predio);
+    }
+    final archivosRepo = ref.read(localArchivosRepositoryProvider);
+
+    final hydratedFiles = <ImportedFile>[];
+    for (final file in parsed) {
+      if (!file.sincronizado || file.features.isEmpty) {
+        hydratedFiles.add(file);
+        continue;
+      }
+
+      final hydrated = _rehydrateImportedFeaturesWithIndexes(
+        file.features,
+        byId,
+        byClave,
+        archivoIds: [
+          file.id,
+          if (file.bdId != null && file.bdId!.isNotEmpty) file.bdId!,
+        ],
+        byArchivoId: byArchivoId,
+      );
+      if (_featuresChanged(file.features, hydrated)) {
+        await archivosRepo.updateArchivo(
+          id: file.id,
+          features: hydrated,
+          rowCount: file.featureCount,
+          sincronizado: file.sincronizado,
+          encontrados: file.encontrados,
+          creados: file.creados,
+          errores: file.errores,
+        );
+        hydratedFiles.add(file.copyWith(features: hydrated));
+      } else {
+        hydratedFiles.add(file);
+      }
+    }
+
+    return hydratedFiles;
   }
 
   Future<void> _seleccionarArchivo() async {
@@ -239,6 +387,9 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
     try {
       final syncService = ref.read(sincronizacionServiceProvider);
+        // Pre-generar el ID del archivo para usarlo como vínculo en cada predio.
+        final archivoId = const Uuid().v4();
+
       final resultado = await syncService.sincronizar(
         features,
         onProgress: (procesados, total) {
@@ -248,6 +399,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
             etapa: 'Sincronizando',
           );
         },
+          archivoId: archivoId,
       );
 
       if (!mounted) return;
@@ -257,6 +409,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         try {
           final archivosRepo = ref.read(localArchivosRepositoryProvider);
           final saved = await archivosRepo.saveArchivo(
+            customId: archivoId,
             nombre: nombre,
             features: resultado.features,
             sincronizado: true,
@@ -271,7 +424,6 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
       setState(() {
         _syncResultado = resultado;
-        _sincronizando = false;
       });
       if (resultado.errores > 0 && resultado.creados == 0 && resultado.encontrados == 0) {
         final detalle = resultado.mensajesError.isNotEmpty
@@ -321,9 +473,11 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         encontrados: resultado.encontrados,
         creados: resultado.creados,
         errores: resultado.errores,
+          fileId: archivoId,
       );
 
       ref.read(importedFeaturesProvider.notifier).state = resultado.features;
+      ref.read(mapaColorModeProvider.notifier).state = MapaColorMode.estatusPredio;
 
       // Refrescar Gestión y Mapa con los nuevos registros creados
       ref.invalidate(prediosListProvider);
@@ -344,17 +498,8 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
         // Navegar a Gestión para que el usuario vea las filas inyectadas
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${resultado.creados} nuevo(s) + ${resultado.encontrados} actualizado(s) en Gestión',
-              ),
-              action: SnackBarAction(
-                label: 'Ver Mapa',
-                onPressed: () => context.go('/mapa'),
-              ),
-              duration: const Duration(seconds: 6),
-            ),
+          _mostrarSnackBar(
+            '${resultado.creados} nuevo(s) + ${resultado.encontrados} actualizado(s) en Gestión',
           );
           context.go('/tabla');
         }
@@ -386,7 +531,6 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
           mensaje: e.toString(),
         );
       }
-      setState(() => _sincronizando = false);
       _mostrarSnackBar(
         'Error de BD: $e\n$insertadosLocales predio(s) registrados en Gestión local.',
         exito: insertadosLocales > 0,
@@ -394,43 +538,516 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       if (insertadosLocales > 0) {
         context.go('/tabla');
       }
+    } finally {
+      if (mounted) {
+        setState(() => _sincronizando = false);
+      }
     }
   }
 
   /// Envía un archivo de la tabla al mapa
   void _verEnMapaDesdeTabla(String fileId) {
+    _verEnMapaDesdeArchivo(fileId);
+  }
+
+  Future<void> _verEnMapaDesdeArchivo(String fileId) async {
     final importedFiles = ref.read(cargaProvider);
     final file = importedFiles.firstWhere((f) => f.id == fileId);
-    ref.read(importedFeaturesProvider.notifier).state = file.features;
+    final hydrated = await _rehydrateImportedFeatures(
+      file.features,
+      archivoIds: [
+        file.id,
+        if (file.bdId != null && file.bdId!.isNotEmpty) file.bdId!,
+      ],
+    );
+    if (_featuresChanged(file.features, hydrated)) {
+      final archivosRepo = ref.read(localArchivosRepositoryProvider);
+      await archivosRepo.updateArchivo(
+        id: file.id,
+        features: hydrated,
+        rowCount: file.featureCount,
+        sincronizado: file.sincronizado,
+        encontrados: file.encontrados,
+        creados: file.creados,
+        errores: file.errores,
+      );
+      ref.read(cargaProvider.notifier).updateFileFeatures(file.id, hydrated);
+    }
+    if (!mounted) return;
+    ref.read(importedFeaturesProvider.notifier).state = hydrated;
+    ref.read(mapaColorModeProvider.notifier).state = MapaColorMode.estatusPredio;
     context.go('/mapa');
   }
 
-  /// Elimina un archivo: del provider en memoria y, si tiene bdId, también de la BD.
-  Future<void> _eliminarArchivo(ImportedFile file) async {
-    ref.read(cargaProvider.notifier).removeFile(file.id);
-    if (file.guardadoEnBD && file.bdId != null) {
-      try {
-        final repo = ref.read(localArchivosRepositoryProvider);
-        await repo.deleteArchivo(file.bdId!);
-      } catch (_) {
-        // Error silencioso: el archivo ya fue quitado de la UI.
+  Future<void> _reprocesarArchivo(ImportedFile file) async {
+    if (_sincronizando || _eliminando || _loading) return;
+    if (file.features.isEmpty) {
+      _mostrarSnackBar('El archivo no tiene features para reprocesar.', exito: false);
+      return;
+    }
+
+    setState(() => _sincronizando = true);
+    ref.read(importacionAsyncProvider.notifier).iniciar(
+      total: file.features.length,
+      etapa: 'Reprocesando',
+    );
+
+    try {
+      final syncService = ref.read(sincronizacionServiceProvider);
+
+      var archivoIdObjetivo = file.id;
+      var resultado = await syncService.sincronizar(
+        file.features,
+        onProgress: (procesados, total) {
+          if (!mounted) return;
+          ref.read(importacionAsyncProvider.notifier).actualizar(
+            procesados: procesados,
+            total: total,
+            etapa: 'Reprocesando',
+          );
+        },
+        archivoId: archivoIdObjetivo,
+      );
+
+      // Compatibilidad con importaciones históricas donde archivo_id pudo quedar en bdId.
+      final shouldRetryWithBdId =
+          resultado.creados == 0 &&
+          resultado.encontrados == 0 &&
+          file.bdId != null &&
+          file.bdId!.isNotEmpty &&
+          file.bdId != file.id;
+      if (shouldRetryWithBdId) {
+        archivoIdObjetivo = file.bdId!;
+        resultado = await syncService.sincronizar(
+          file.features,
+          onProgress: (procesados, total) {
+            if (!mounted) return;
+            ref.read(importacionAsyncProvider.notifier).actualizar(
+              procesados: procesados,
+              total: total,
+              etapa: 'Reprocesando',
+            );
+          },
+          archivoId: archivoIdObjetivo,
+        );
+      }
+
+      final archivosRepo = ref.read(localArchivosRepositoryProvider);
+      await archivosRepo.updateArchivo(
+        id: file.id,
+        features: resultado.features,
+        rowCount: file.featureCount,
+        sincronizado: true,
+        encontrados: resultado.encontrados,
+        creados: resultado.creados,
+        errores: resultado.errores,
+      );
+
+      ref.read(cargaProvider.notifier).updateFileSyncResult(
+        file.id,
+        features: resultado.features,
+        sincronizado: true,
+        encontrados: resultado.encontrados,
+        creados: resultado.creados,
+        errores: resultado.errores,
+      );
+
+      ref.read(importedFeaturesProvider.notifier).state = resultado.features;
+      ref.read(mapaColorModeProvider.notifier).state = MapaColorMode.estatusPredio;
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+
+      ref.read(importacionAsyncProvider.notifier).completar(
+        total: file.features.length,
+        etapa: 'Completado',
+      );
+
+      if (!mounted) return;
+      _mostrarSnackBar(
+        'Reproceso completado: ${resultado.creados} nuevo(s), ${resultado.encontrados} actualizado(s)'
+        '${resultado.errores > 0 ? ', ${resultado.errores} con error' : ''}.',
+        exito: resultado.errores == 0,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ref.read(importacionAsyncProvider.notifier).fallar(
+        procesados: 0,
+        total: file.features.length,
+        etapa: 'Error',
+        mensaje: e.toString(),
+      );
+      _mostrarSnackBar('No se pudo reprocesar el archivo: $e', exito: false);
+    } finally {
+      if (mounted) {
+        setState(() => _sincronizando = false);
       }
     }
   }
 
-  Future<void> _eliminarTodos(List<ImportedFile> files) async {
-    ref.read(cargaProvider.notifier).clearAll();
+  Future<List<Map<String, dynamic>>> _rehydrateImportedFeatures(
+    List<Map<String, dynamic>> features,
+    {List<String>? archivoIds}
+  ) async {
+    if (features.isEmpty) return features;
+
+    final predios = await ref.read(prediosMapaProvider.future);
+    final byId = <String, Predio>{
+      for (final predio in predios) predio.id: predio,
+    };
+    final byClave = <String, Predio>{
+      for (final predio in predios)
+        if (predio.claveCatastral.trim().isNotEmpty)
+          predio.claveCatastral.trim().toUpperCase(): predio,
+    };
+    final byArchivoId = <String, List<Predio>>{};
+    for (final predio in predios) {
+      final predioArchivoId = predio.archivoId?.trim();
+      if (predioArchivoId == null || predioArchivoId.isEmpty) continue;
+      byArchivoId.putIfAbsent(predioArchivoId, () => <Predio>[]).add(predio);
+    }
+
+    return _rehydrateImportedFeaturesWithIndexes(
+      features,
+      byId,
+      byClave,
+      archivoIds: archivoIds,
+      byArchivoId: byArchivoId,
+    );
+  }
+
+  List<Map<String, dynamic>> _rehydrateImportedFeaturesWithIndexes(
+    List<Map<String, dynamic>> features,
+    Map<String, Predio> byId,
+    Map<String, Predio> byClave,
+    {List<String>? archivoIds, Map<String, List<Predio>>? byArchivoId}
+  ) {
+    final normalizedArchivoIds = (archivoIds ?? const <String>[])
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final prediosDelArchivo = <Predio>[];
+    for (final id in normalizedArchivoIds) {
+      prediosDelArchivo.addAll(byArchivoId?[id] ?? const <Predio>[]);
+    }
+    final canUseIndexFallback =
+        prediosDelArchivo.isNotEmpty && prediosDelArchivo.length == features.length;
+
+    final hydrated = <Map<String, dynamic>>[];
+    for (var i = 0; i < features.length; i++) {
+      final feature = features[i];
+      final featureMap = Map<String, dynamic>.from(feature);
+      final propsRaw = featureMap['properties'];
+      final props = propsRaw is Map
+          ? Map<String, dynamic>.from(propsRaw)
+          : <String, dynamic>{};
+
+      final mergedProps = <String, dynamic>{...props};
+      for (final entry in featureMap.entries) {
+        final key = entry.key;
+        if (key == 'type' || key == 'geometry' || key == 'properties') {
+          continue;
+        }
+        mergedProps.putIfAbsent(key, () => entry.value);
+      }
+      final normalizedProps = GeoJsonMapper.normalizeProperties(mergedProps);
+
+      final predioId = (props['_predioId'] ?? props['predio_id'])?.toString().trim();
+      final clave = (props['clave_catastral_db'] ??
+              props['_claveCatastral'] ??
+              props['clave_catastral'] ??
+              props['CLAVE_CATASTRAL'] ??
+              props['clave'] ??
+              props['CLAVE'])
+          ?.toString()
+          .trim()
+          .toUpperCase();
+
+      Predio? predio = (predioId != null && predioId.isNotEmpty)
+          ? byId[predioId]
+          : (clave != null && clave.isNotEmpty ? byClave[clave] : null);
+      if (predio == null && canUseIndexFallback) {
+        predio = prediosDelArchivo[i];
+      }
+
+      if (predio == null) {
+        final estatusNormalizado = normalizedProps['estatus']?.toString();
+        if (estatusNormalizado == null || estatusNormalizado == 'Sin estatus') {
+          hydrated.add(featureMap);
+          continue;
+        }
+
+        hydrated.add(<String, dynamic>{
+          ...featureMap,
+          'properties': <String, dynamic>{
+            ...props,
+            ...normalizedProps,
+            '_estatusColorKey': estatusNormalizado,
+          },
+        });
+        continue;
+      }
+
+      final estatus = predio.estatusGestion;
+      final updatedProps = <String, dynamic>{
+        ...props,
+        ...normalizedProps,
+        '_predioId': predio.id,
+        'predio_id': predio.id,
+        '_claveCatastral': predio.claveCatastral,
+        'clave_catastral_db': predio.claveCatastral,
+        if (predio.archivoId != null) 'archivo_id': predio.archivoId,
+        '_cop': predio.cop,
+        'cop': predio.cop,
+        '_identificacion': predio.identificacion,
+        'identificacion': predio.identificacion,
+        '_levantamiento': predio.levantamiento,
+        'levantamiento': predio.levantamiento,
+        '_negociacion': predio.negociacion,
+        'negociacion': predio.negociacion,
+        '_estatusPredio': estatus,
+        'estatus_predio': estatus,
+        'estatus': estatus,
+        '_estatusColorKey': estatus,
+      };
+
+      hydrated.add(<String, dynamic>{
+        ...featureMap,
+        'properties': updatedProps,
+      });
+    }
+
+    return hydrated;
+  }
+
+  bool _featuresChanged(
+    List<Map<String, dynamic>> previous,
+    List<Map<String, dynamic>> next,
+  ) {
+    if (identical(previous, next)) return false;
+    if (previous.length != next.length) return true;
+    return jsonEncode(previous) != jsonEncode(next);
+  }
+
+  Set<String> _extraerClavesFeatures(List<Map<String, dynamic>> features) {
+    final claves = <String>{};
+    for (final feature in features) {
+      final propsRaw = feature['properties'];
+      if (propsRaw is! Map) continue;
+      final props = Map<String, dynamic>.from(propsRaw);
+      final clave = (props['clave_catastral'] ??
+              props['CLAVE_CATASTRAL'] ??
+              props['clave'] ??
+              props['CLAVE'])
+          ?.toString()
+          .trim();
+      if (clave != null && clave.isNotEmpty) {
+        claves.add(clave.toUpperCase());
+      }
+    }
+    return claves;
+  }
+
+  Future<int> _eliminarPrediosPorClaves(Set<String> claves) async {
+    if (claves.isEmpty) return 0;
+    final repo = ref.read(prediosRepositoryProvider);
+    final all = await repo.getPredios(limit: 100000);
+    var eliminados = 0;
+    for (final p in all) {
+      if (claves.contains(p.claveCatastral.trim().toUpperCase())) {
+        try {
+          await repo.deletePredio(p.id);
+          eliminados++;
+        } catch (_) {}
+      }
+    }
+    return eliminados;
+  }
+
+  /// Elimina un archivo: en cascada por archivoId -> predios, mapa y archivo.
+  Future<void> _eliminarArchivo(ImportedFile file) async {
+    if (_eliminando) return;
+    _iniciarEliminacion(total: 6, fileId: file.id, etapa: 'Eliminando archivo...');
+
+    var paso = 0;
+    var eliminadosGestion = 0;
+    var falloGestion = false;
     try {
-      final repo = ref.read(localArchivosRepositoryProvider);
-      await repo.deleteAll();
-    } catch (_) {}
+      // 1) Quitar de la lista en UI.
+      ref.read(cargaProvider.notifier).removeFile(file.id);
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Actualizando lista...');
+
+      // 2) Limpiar overlay en mapa.
+      ref.read(importedFeaturesProvider.notifier).state = [];
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Limpiando mapa...');
+
+      // 3) Intentar borrado en Gestión. Si falla, no bloquear borrado local.
+      final repoPredios = ref.read(prediosRepositoryProvider);
+      try {
+        final byMain = await repoPredios.getPrediosByArchivoId(file.id).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => [],
+        );
+        if (byMain.isNotEmpty) {
+          await repoPredios.deletePrediosByArchivoId(file.id);
+          eliminadosGestion += byMain.length;
+        }
+
+        // 4) Fallback por bdId (importaciones antiguas con id mismatch).
+        if (eliminadosGestion == 0 &&
+            file.bdId != null &&
+            file.bdId!.isNotEmpty &&
+            file.bdId != file.id) {
+          final byBdId = await repoPredios
+              .getPrediosByArchivoId(file.bdId!)
+              .timeout(
+                const Duration(seconds: 3),
+                onTimeout: () => [],
+              );
+          if (byBdId.isNotEmpty) {
+            await repoPredios.deletePrediosByArchivoId(file.bdId!);
+            eliminadosGestion += byBdId.length;
+          }
+        }
+
+        // 5) Fallback adicional por claves catastrales de las features importadas.
+        if (eliminadosGestion == 0) {
+          final claves = _extraerClavesFeatures(file.features);
+          eliminadosGestion += await _eliminarPrediosPorClaves(claves);
+        }
+      } catch (_) {
+        falloGestion = true;
+      }
+
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Eliminando en Gestión...');
+
+      // 6) Limpiar fallback local e invalidar vistas.
+      ref.read(localPrediosProvider.notifier).clearAll();
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Refrescando Gestión y mapa...');
+
+      // 7) Borrar registro local del archivo (probar ambos IDs).
+      final archivosRepo = ref.read(localArchivosRepositoryProvider);
+      try {
+        await archivosRepo.deleteArchivo(file.id);
+      } catch (_) {}
+      if (file.bdId != null && file.bdId != file.id) {
+        try {
+          await archivosRepo.deleteArchivo(file.bdId!);
+        } catch (_) {}
+      }
+      paso = 6;
+      _actualizarEliminacion(procesados: paso, etapa: 'Finalizando...');
+
+      if (falloGestion) {
+        _mostrarSnackBar(
+          'Archivo eliminado localmente. No se pudo sincronizar la eliminación en Gestión.',
+          exito: false,
+        );
+      } else {
+        _mostrarSnackBar(
+          eliminadosGestion > 0
+              ? 'Archivo eliminado. $eliminadosGestion predio(s) removidos de Gestión.'
+              : 'Archivo eliminado. No se encontraron predios vinculados para borrar.',
+        );
+      }
+    } catch (e) {
+      _mostrarSnackBar('No se pudo eliminar completamente: $e', exito: false);
+    } finally {
+      _finalizarEliminacion();
+    }
+  }
+
+  Future<void> _eliminarTodos(List<ImportedFile> files) async {
+    if (_eliminando) return;
+    if (files.isEmpty) return;
+
+    final totalPasos = files.length + 4;
+    _iniciarEliminacion(total: totalPasos, etapa: 'Eliminando archivos...');
+
+    var paso = 0;
+    var eliminadosGestion = 0;
+    try {
+      ref.read(cargaProvider.notifier).clearAll();
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Limpiando lista de archivos...');
+
+      ref.read(importedFeaturesProvider.notifier).state = [];
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Limpiando mapa...');
+
+      final repoPredios = ref.read(prediosRepositoryProvider);
+      for (final file in files) {
+        var borradosArchivo = 0;
+        try {
+          final byMain = await repoPredios.getPrediosByArchivoId(file.id).timeout(
+            const Duration(seconds: 3),
+            onTimeout: () => [],
+          );
+          if (byMain.isNotEmpty) {
+            await repoPredios.deletePrediosByArchivoId(file.id);
+            borradosArchivo += byMain.length;
+          }
+
+          if (borradosArchivo == 0 &&
+              file.bdId != null &&
+              file.bdId!.isNotEmpty &&
+              file.bdId != file.id) {
+            final byBdId = await repoPredios.getPrediosByArchivoId(file.bdId!).timeout(
+              const Duration(seconds: 3),
+              onTimeout: () => [],
+            );
+            if (byBdId.isNotEmpty) {
+              await repoPredios.deletePrediosByArchivoId(file.bdId!);
+              borradosArchivo += byBdId.length;
+            }
+          }
+
+          if (borradosArchivo == 0) {
+            final claves = _extraerClavesFeatures(file.features);
+            borradosArchivo += await _eliminarPrediosPorClaves(claves);
+          }
+        } catch (_) {
+          // Si falla la conexión al backend, continuamos sin sincronizar.
+          // Los archivos se borrarán del almacenamiento local igualmente.
+        }
+
+        eliminadosGestion += borradosArchivo;
+        paso++;
+        _actualizarEliminacion(
+          procesados: paso,
+          etapa: 'Eliminando ${paso - 2}/${files.length} en Gestión...',
+        );
+      }
+
+      ref.read(localPrediosProvider.notifier).clearAll();
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Refrescando vistas...');
+
+      final archivosRepo = ref.read(localArchivosRepositoryProvider);
+      await archivosRepo.deleteAll();
+      paso++;
+      _actualizarEliminacion(procesados: paso, etapa: 'Finalizando...');
+
+      _mostrarSnackBar('Eliminación completada. $eliminadosGestion predio(s) removidos de Gestión.');
+    } catch (e) {
+      _mostrarSnackBar('No se pudo eliminar todo: $e', exito: false);
+    } finally {
+      _finalizarEliminacion();
+    }
   }
 
   Future<void> _inyectarXlsxEnTablas() async {
     final parseResult = _xlsxParseResult;
     if (parseResult == null) return;
 
-    if (!SupabaseConfig.isConfigured) {
+    if (!CloudDataConfig.isRemoteDataEnabled) {
       await _inyectarXlsxLocal(parseResult);
       return;
     }
@@ -447,6 +1064,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
       if (!mounted) return;
       setState(() => _sincronizando = false);
+
       if (resultado.errores == 0) {
         _mostrarSnackBar(
           'Inyección completada: ${resultado.procesados} fila(s), ${resultado.creados} creada(s), '
@@ -454,15 +1072,15 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         );
       } else {
         _mostrarSnackBar(
-          resultado.mensajes.isNotEmpty
-              ? resultado.mensajes.first
-              : 'Algunas filas no pudieron inyectarse (${resultado.errores} error(es)).',
+          'Inyección parcial: ${resultado.creados} creada(s), ${resultado.actualizados} actualizada(s), '
+          '${resultado.errores} con error.',
           exito: false,
         );
       }
 
       // Persistir el archivo XLSX en la BD y registrarlo en la lista
       if (_archivoSeleccionado != null) {
+        final fileId = const Uuid().v4();
         String? bdId;
         try {
           final archivosRepo = ref.read(localArchivosRepositoryProvider);
@@ -479,6 +1097,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         } catch (_) {
           // Si falla el guardado del archivo, continuar igualmente.
         }
+
         ref.read(cargaProvider.notifier).addFile(
           _archivoSeleccionado!.name,
           const [],
@@ -489,11 +1108,8 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
           encontrados: resultado.actualizados,
           errores: resultado.errores,
           rowCount: resultado.procesados,
+          fileId: fileId,
         );
-      }
-
-      if (resultado.errores > 0 && mounted) {
-        // error SnackBar already shown above
       }
 
       if (mounted) {
@@ -503,8 +1119,8 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
       if (!mounted) return;
       setState(() => _sincronizando = false);
       _mostrarSnackBar(
-        !SupabaseConfig.isConfigured
-            ? 'Supabase no está configurado. Reemplaza la URL y la anon key reales en lib/core/supabase/supabase_config.dart antes de inyectar el XLSX.'
+        !CloudDataConfig.isRemoteDataEnabled
+            ? CloudDataConfig.setupHint
             : 'Error al inyectar XLSX: $e',
         exito: false,
       );
@@ -933,10 +1549,17 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   @override
   Widget build(BuildContext context) {
     final progresoImportacion = ref.watch(importacionProgresoProvider);
-    final isBusy = _loading || _sincronizando;
+    final estadoImportacion = ref.watch(importacionEstadoProvider);
+    final isBusy = _loading || _sincronizando || _eliminando;
+    final importacionPesadaActiva =
+        _sincronizando && estadoImportacion == ImportacionEstado.procesando;
+    final mostrarOverlayGlobal = _loading || _eliminando;
+    final progresoEliminacion = _eliminacionTotal > 0
+        ? (_eliminacionProcesados / _eliminacionTotal).clamp(0.0, 1.0)
+        : 0.0;
 
     return AppScaffold(
-      currentIndex: 2,
+      currentIndex: 3,
       title: 'Carga de Archivos',
       child: Stack(
         children: [
@@ -1025,6 +1648,158 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                 ),
               ),
             ),
+
+            if (isBusy || estadoImportacion != ImportacionEstado.idle) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _colorEstadoImportacion(estadoImportacion)
+                      .withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _colorEstadoImportacion(estadoImportacion)
+                        .withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        if (estadoImportacion == ImportacionEstado.procesando)
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _colorEstadoImportacion(estadoImportacion),
+                            ),
+                          )
+                        else
+                          Icon(
+                            _iconoEstadoImportacion(estadoImportacion),
+                            size: 18,
+                            color: _colorEstadoImportacion(estadoImportacion),
+                          ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _tituloEstadoImportacion(
+                              estadoImportacion,
+                              progresoImportacion.etapa,
+                            ),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              color: _colorEstadoImportacion(estadoImportacion),
+                            ),
+                          ),
+                        ),
+                        if (progresoImportacion.total > 0)
+                          Text(
+                            '${(progresoImportacion.porcentaje * 100).round()}%',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (progresoImportacion.total > 0) ...[
+                      const SizedBox(height: 10),
+                      LinearProgressIndicator(
+                        value: estadoImportacion == ImportacionEstado.procesando
+                            ? progresoImportacion.porcentaje
+                            : (estadoImportacion == ImportacionEstado.completado
+                                ? 1
+                                : progresoImportacion.porcentaje),
+                        minHeight: 8,
+                        borderRadius: BorderRadius.circular(99),
+                        backgroundColor: Colors.black.withValues(alpha: 0.06),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${progresoImportacion.procesados} de ${progresoImportacion.total} registros',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+
+            if (_eliminando) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.warning.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.warning,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _etapaEliminacion,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              color: AppColors.warning,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${(progresoEliminacion * 100).round()}%',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(
+                      value: progresoEliminacion,
+                      minHeight: 8,
+                      borderRadius: BorderRadius.circular(99),
+                      backgroundColor: Colors.black.withValues(alpha: 0.06),
+                      valueColor: const AlwaysStoppedAnimation(AppColors.warning),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '$_eliminacionProcesados de $_eliminacionTotal pasos',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             if ((_syncResultado?.errores ?? 0) > 0 ||
                 (_syncResultado?.mensajesError.isNotEmpty ?? false)) ...[
@@ -1253,7 +2028,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        icon: (_sincronizando)
+                        icon: (_sincronizando && !importacionPesadaActiva)
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
@@ -1357,7 +2132,9 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                                   child: const Text('Cancelar'),
                                 ),
                                 TextButton(
-                                  onPressed: () {
+                                  onPressed: _eliminando
+                                      ? null
+                                      : () {
                                     Navigator.pop(ctx);
                                     _eliminarTodos(importedFiles);
                                   },
@@ -1397,7 +2174,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         ),
       ),
     ),
-    if (isBusy)
+    if (mostrarOverlayGlobal)
       Positioned.fill(
         child: Container(
           color: Colors.black.withValues(alpha: 0.22),
@@ -1426,7 +2203,9 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  _sincronizando
+                  _eliminando
+                    ? 'Eliminando del mapa y de Gestión...'
+                    : _sincronizando
                       ? 'Inyectando y actualizando datos...'
                       : 'Leyendo archivo...',
                   textAlign: TextAlign.center,
@@ -1453,7 +2232,8 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     final statusIcon = file.guardadoEnBD ? Icons.cloud_done_outlined : Icons.cloud_off_outlined;
     final statusLabel = file.guardadoEnBD ? 'Guardado en BD' : 'Solo en memoria';
 
-    final busy = _loading || _sincronizando;
+    final busy = _loading || _eliminando;
+    final deletingThis = _eliminando && _archivoEliminandoId == file.id;
     return Stack(
       children: [
         ListTile(
@@ -1517,17 +2297,32 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                   icon: const Icon(Icons.map_outlined, size: 18),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  onPressed: () => _verEnMapaDesdeTabla(file.id),
+                  onPressed: busy ? null : () => _verEnMapaDesdeTabla(file.id),
+                ),
+              ),
+              Tooltip(
+                message: 'Reprocesar',
+                child: IconButton(
+                  icon: const Icon(Icons.refresh, size: 18),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  onPressed: busy ? null : () => _reprocesarArchivo(file),
                 ),
               ),
               Tooltip(
                 message: 'Eliminar',
                 child: IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 18,
-                      color: AppColors.danger),
+                  icon: deletingThis
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_outline, size: 18,
+                          color: AppColors.danger),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  onPressed: () => showDialog(
+                  onPressed: busy ? null : () => showDialog(
                     context: context,
                     builder: (ctx) => AlertDialog(
                       title: const Text('Eliminar archivo'),
@@ -1541,9 +2336,9 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                           child: const Text('Cancelar'),
                         ),
                         TextButton(
-                          onPressed: () {
-                            _eliminarArchivo(file);
+                          onPressed: () async {
                             Navigator.pop(ctx);
+                            await _eliminarArchivo(file);
                           },
                           child: const Text('Eliminar',
                               style: TextStyle(color: AppColors.danger)),

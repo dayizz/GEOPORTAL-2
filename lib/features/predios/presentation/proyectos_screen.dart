@@ -455,9 +455,12 @@ class _ProyectosScreenState extends ConsumerState<ProyectosScreen> {
   }
 
   Widget _estatusBadgeCell(String? estatus, double width) {
-    final color = estatus == 'Liberado'
+    final statusText = (estatus?.trim().isNotEmpty ?? false)
+      ? estatus!.trim()
+      : 'Sin estatus';
+    final color = statusText == 'Liberado'
         ? AppColors.secondary
-        : estatus == 'No liberado'
+      : statusText == 'No liberado'
             ? AppColors.danger
             : Colors.grey;
     return Container(
@@ -470,7 +473,7 @@ class _ProyectosScreenState extends ConsumerState<ProyectosScreen> {
         border: const Border(right: BorderSide(color: AppColors.border, width: 0.5)),
       ),
       child: Text(
-        estatus ?? 'Sin estatus',
+        statusText,
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w600,

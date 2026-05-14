@@ -197,6 +197,10 @@ class LocalPrediosNotifier extends StateNotifier<List<Predio>> {
     return inserted;
   }
 
+  void clearAll() {
+    state = const [];
+  }
+
   void updatePredio(Predio updated) {
     state = [
       for (final p in state)

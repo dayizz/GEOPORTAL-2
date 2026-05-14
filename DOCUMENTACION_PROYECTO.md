@@ -5,7 +5,12 @@
 Geoportal Predios es una aplicación Flutter para gestión catastral y territorial.
 Permite visualizar predios en mapa, administrar información de propietarios, importar archivos geoespaciales (GeoJSON) y generar reportes operativos por proyecto.
 
-Está pensada para trabajar con una base de datos en Supabase (PostgreSQL), con una capa de autenticación y persistencia de archivos importados.
+Está pensada para operar localmente hoy y migrar después a una base en la nube. La decisión actual es que el destino cloud será Firestore.
+
+Estado actual de arquitectura:
+- Hoy: operación local-first y componentes heredados de Supabase aún presentes en parte del código.
+- Futuro objetivo: Firestore como base cloud principal.
+- Criterio de implementación: evitar nuevos acoplamientos fuertes a Supabase.
 
 ## 2. ¿Qué hace la aplicación?
 
@@ -40,9 +45,18 @@ La aplicación cubre cuatro frentes principales:
 - Flutter + Dart (SDK ^3.11.4)
 - Estado: Riverpod
 - Navegación: GoRouter
-- Backend: Supabase (Auth, Postgres, Storage)
+- Backend local: API HTTP local y persistencia auxiliar actual
+- Destino cloud previsto: Firestore
 - Mapa: flutter_map + GeoJSON
 - Visualización de métricas: fl_chart
+
+### Estrategia local-first con nube futura
+- Durante desarrollo local, el backend HTTP usa `http://127.0.0.1:8000` por defecto.
+- La URL del backend se puede cambiar sin tocar código usando `--dart-define=API_BASE_URL=...`.
+- Esto permite trabajar en local hoy y apuntar a un backend en la nube después, manteniendo la misma app.
+- La nube objetivo considerada para la siguiente etapa es Firestore, no Supabase.
+- La selección del backend cloud también quedó preparada por configuración con `--dart-define=CLOUD_BACKEND=firestore|supabase|none`.
+- En esta etapa, `firestore` funciona como destino arquitectónico previsto, no como integración ya implementada.
 
 ### Estructura general
 - lib/main.dart
@@ -180,6 +194,12 @@ Notas:
   o
 - flutter run -d macos
 
+### Cambiar el backend sin editar código
+- `flutter run -d macos --dart-define=API_BASE_URL=http://127.0.0.1:8000`
+- `flutter run -d macos --dart-define=API_BASE_URL=https://tu-dominio-en-la-nube`
+- `flutter run -d macos --dart-define=CLOUD_BACKEND=none`
+- `flutter run -d macos --dart-define=CLOUD_BACKEND=firestore`
+
 ## 7. Estado actual y observaciones
 
 - El README actual está en plantilla base de Flutter y no describe el sistema.
@@ -218,6 +238,14 @@ Este proyecto implementa un geoportal operativo para gestión de predios:
 4. Diagnóstico de importación
 - La pantalla de carga puede exportar reporte de errores de sincronización en `JSON` y `CSV`.
 - El reporte toma las features con `_syncStatus = error` y los mensajes de error acumulados del proceso.
+
+5. Rendimiento de visualización del mapa
+- El mapa ahora reutiliza una caché geométrica en memoria para predios e importaciones GeoJSON ya procesadas.
+- La caché evita recalcular rings, centroides y polígonos cada vez que la pantalla reconstruye la UI o cambia el modo de color.
+- También se reutiliza en hit-testing de features importados, reduciendo el costo al seleccionar polígonos sobre el mapa.
+- Se agregó warm-up en segundo plano con isolate para prellenar caché geométrica de predios al abrir el mapa y reducir picos de trabajo en el hilo principal.
+- Se agregó simplificación geométrica adaptativa por nivel de zoom (menos vértices cuando el usuario está alejado, máxima precisión al acercar).
+- Se agregaron métricas de tiempo en debug (`[map_perf]`) para medir etapas de carga/render y orientar las siguientes optimizaciones con datos reales.
 
 ---
 
@@ -517,4 +545,5 @@ Cada fase tiene su propio documento en la carpeta `docs/`:
 | 6 | [docs/IMPL_06_desktop_fase6_firma_notarizacion.md](docs/IMPL_06_desktop_fase6_firma_notarizacion.md) | ✅ Ad-hoc / ⏳ Developer ID (requiere Apple Developer Program) |
 | 7 | [docs/IMPL_07_desktop_fase7_cicd_github_actions.md](docs/IMPL_07_desktop_fase7_cicd_github_actions.md) | ✅ Completado |
 | 8 | [docs/IMPL_08_web_fase8_deploy_github_pages.md](docs/IMPL_08_web_fase8_deploy_github_pages.md) | ✅ Completado |
+| 9 | [docs/IMPL_09_gis_server_vector_tiles_estatus.md](docs/IMPL_09_gis_server_vector_tiles_estatus.md) | ✅ Diseño técnico (GIS + estatus COP/TEC) |
 

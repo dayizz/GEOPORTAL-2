@@ -59,6 +59,11 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
 
   DateTime _monthKey(DateTime date) => DateTime(date.year, date.month);
 
+  bool _hasPdfDocumento(Predio predio) {
+    final pdf = (predio.pdfUrl ?? predio.copFirmado ?? '').trim();
+    return pdf.isNotEmpty;
+  }
+
   List<double> _monthlySeries({
     required List<Predio> predios,
     required DateTime? Function(Predio) dateSelector,
@@ -91,7 +96,7 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
     final fmtInt = NumberFormat('#,##0', 'es_MX');
 
     return AppScaffold(
-      currentIndex: 1,
+      currentIndex: 2,
       title: 'Balance  •  $_proyectoActual',
       child: prediosAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -118,17 +123,10 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
           final porTipo = _groupCountBy(proyectoPredios, (predio) => predio.tipoPropiedad);
           final porTramo = _groupCountBy(proyectoPredios, (predio) => predio.tramo);
           final m2Total = proyectoPredios.fold<double>(0, (sum, predio) => sum + (predio.superficie ?? 0));
-          final copFirmados = proyectoPredios.where((predio) => predio.cop).length;
-          final ddvNecesario = m2Total;
-          final ddvAcreditadoTotal = proyectoPredios
-              .where((predio) =>
-                  predio.identificacion || predio.levantamiento || predio.negociacion || predio.cop)
-              .fold<double>(0, (sum, predio) => sum + (predio.superficie ?? 0));
-          final ddvLiberado = proyectoPredios
-              .where((predio) => predio.cop)
-              .fold<double>(0, (sum, predio) => sum + (predio.superficie ?? 0));
-          final ddvAcreditadoNoLiberado = (ddvAcreditadoTotal - ddvLiberado).clamp(0.0, double.infinity);
-          final ddvPendiente = (ddvNecesario - ddvAcreditadoTotal).clamp(0.0, double.infinity);
+          final copFirmados = proyectoPredios.where(_hasPdfDocumento).length;
+          final kmEfectivosTotal = proyectoPredios.fold<double>(0, (sum, predio) => sum + (predio.kmEfectivos ?? 0));
+            final lddvLiberado = proyectoPredios.where(_hasPdfDocumento).length.toDouble();
+            final lddvPendiente = (total - lddvLiberado.toInt()).clamp(0, total).toDouble();
 
           final totalPrediosSeries = _monthlySeries(
             predios: proyectoPredios,
@@ -136,17 +134,17 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
             valueSelector: (_) => 1,
           );
           final copFirmadosSeries = _monthlySeries(
-            predios: proyectoPredios.where((p) => p.cop).toList(),
+            predios: proyectoPredios.where(_hasPdfDocumento).toList(),
             dateSelector: (p) => p.copFecha ?? p.updatedAt ?? p.createdAt,
             valueSelector: (_) => 1,
           );
-          final m2TotalSeries = _monthlySeries(
+          final kmEfectivosSeries = _monthlySeries(
             predios: proyectoPredios,
             dateSelector: (p) => p.createdAt,
-            valueSelector: (p) => p.superficie ?? 0,
+            valueSelector: (p) => p.kmEfectivos ?? 0,
           );
           final pendienteCopSeries = _monthlySeries(
-            predios: proyectoPredios.where((p) => !p.cop).toList(),
+            predios: proyectoPredios.where((p) => !_hasPdfDocumento(p)).toList(),
             dateSelector: (p) => p.updatedAt ?? p.createdAt,
             valueSelector: (_) => 1,
           );
@@ -214,11 +212,11 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
                         sparkValues: copFirmadosSeries,
                       ),
                       _buildKpiPanel(
-                        label: 'M² DDV Total',
-                        value: fmtInt.format(m2Total),
+                        label: 'Km Efectivos',
+                        value: fmt.format(kmEfectivosTotal),
                         color: AppColors.info,
-                        icon: Icons.square_foot_outlined,
-                        sparkValues: m2TotalSeries,
+                        icon: Icons.route_outlined,
+                        sparkValues: kmEfectivosSeries,
                       ),
                       _buildKpiPanel(
                         label: 'Pendiente COP',
@@ -232,18 +230,17 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
                 ),
 
                 const SizedBox(height: 20),
-                Text('Cuantificación DDV', style: Theme.of(context).textTheme.titleLarge),
+                Text('AVANCE LDDV', style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 12),
                 _buildDdvStackedBar(
                   context: context,
-                  necesario: ddvNecesario,
-                  acreditadoNoLiberado: ddvAcreditadoNoLiberado,
-                  liberado: ddvLiberado,
-                  pendiente: ddvPendiente,
+                  totalPredios: total.toDouble(),
+                  liberado: lddvLiberado,
+                  pendiente: lddvPendiente,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Total DDV Necesario en $_proyectoActual: ${fmt.format(ddvNecesario)} m²',
+                  'Predios liberados por PDF en $_proyectoActual: ${fmtInt.format(lddvLiberado.toInt())} de ${fmtInt.format(total)}',
                   style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                 ),
 
@@ -369,13 +366,11 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
 
   Widget _buildDdvStackedBar({
     required BuildContext context,
-    required double necesario,
-    required double acreditadoNoLiberado,
+    required double totalPredios,
     required double liberado,
     required double pendiente,
   }) {
-    final total = necesario <= 0 ? 1.0 : necesario;
-    final pctAcred = (acreditadoNoLiberado / total).clamp(0.0, 1.0).toDouble();
+    final total = totalPredios <= 0 ? 1.0 : totalPredios;
     final pctLiber = (liberado / total).clamp(0.0, 1.0).toDouble();
     final pctPend = (pendiente / total).clamp(0.0, 1.0).toDouble();
     final fmt = NumberFormat('#,##0', 'es_MX');
@@ -386,14 +381,6 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
         Expanded(
           flex: (pctLiber * 1000).round().clamp(1, 1000),
           child: Container(height: 24, color: AppColors.secondary),
-        ),
-      );
-    }
-    if (pctAcred > 0) {
-      segmentWidgets.add(
-        Expanded(
-          flex: (pctAcred * 1000).round().clamp(1, 1000),
-          child: Container(height: 24, color: AppColors.info),
         ),
       );
     }
@@ -427,11 +414,11 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
-                '100% DDV Necesario',
+                '100% Predios del proyecto',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
               ),
               Text(
-                '${fmt.format(necesario)} m²',
+                '${fmt.format(totalPredios)} predios',
                 style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
             ],
@@ -447,7 +434,6 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
             runSpacing: 8,
             children: <Widget>[
               _ddvLegend('Liberado', AppColors.secondary, liberado, pctLiber),
-              _ddvLegend('Acreditado', AppColors.info, acreditadoNoLiberado, pctAcred),
               _ddvLegend('Pendiente', AppColors.danger, pendiente, pctPend),
             ],
           ),
@@ -471,7 +457,7 @@ class _ReportesScreenState extends ConsumerState<ReportesScreen> {
         ),
         const SizedBox(width: 6),
         Text(
-          '$label  ${fmt.format(value)} m² (${(pct * 100).toStringAsFixed(1)}%)',
+          '$label  ${fmt.format(value)} predios (${(pct * 100).toStringAsFixed(1)}%)',
           style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
         ),
       ],

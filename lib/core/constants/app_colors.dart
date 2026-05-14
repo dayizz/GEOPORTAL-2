@@ -24,6 +24,9 @@ class AppColors {
 
   static const Color mapBackground = Color(0xFFE8F0F7);
 
+  static const Color liberadoColor = Color(0xFF2ECC71); // Verde para liberado
+  static const Color noLiberadoColor = Color(0xFFE74C3C); // Rojo para no liberado
+
   // Usos de suelo
   static const Color usoHabitacional = Color(0xFF3498DB);
   static const Color usoComercial = Color(0xFFF39C12);

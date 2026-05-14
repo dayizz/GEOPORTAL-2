@@ -10,6 +10,8 @@ class Predio {
   final String tipoPropiedad; // SOCIAL, DOMINIO PLENO, PRIVADA
   final String? ejido;
   final String? estado;
+    /// ID del archivo importado (ImportedFile.id) que originó este predio.
+    final String? archivoId;
   final String? municipio;
   final double? kmInicio;
   final double? kmFin;
@@ -41,6 +43,30 @@ class Predio {
   String get zona => tramo;
   String get direccion => ejido ?? '-';
 
+  // Estado de liberacion unificado para Gestion y Mapa.
+  String get estatusGestion {
+    if (cop) return 'Liberado';
+    if (negociacion || levantamiento || identificacion) {
+      return 'No liberado';
+    }
+    return 'Sin estatus';
+  }
+
+  static bool _asBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' ||
+          normalized == '1' ||
+          normalized == 'si' ||
+          normalized == 'sí' ||
+          normalized == 'yes' ||
+          normalized == 'y';
+    }
+    return false;
+  }
+
   const Predio({
     required this.id,
     required this.claveCatastral,
@@ -50,6 +76,7 @@ class Predio {
     this.ejido,
     this.estado,
     this.municipio,
+      this.archivoId,
     this.kmInicio,
     this.kmFin,
     this.kmLineales,
@@ -101,12 +128,13 @@ class Predio {
       ejido: map['ejido'] as String?,
       estado: map['estado'] as String?,
       municipio: map['municipio'] as String?,
+        archivoId: map['archivo_id'] as String?,
       kmInicio: (map['km_inicio'] as num?)?.toDouble(),
       kmFin: (map['km_fin'] as num?)?.toDouble(),
       kmLineales: (map['km_lineales'] as num?)?.toDouble(),
       kmEfectivos: (map['km_efectivos'] as num?)?.toDouble(),
       superficie: (map['superficie'] as num?)?.toDouble(),
-      cop: map['cop'] as bool? ?? false,
+      cop: _asBool(map['cop']),
       copFirmado: map['cop_firmado'] as String?,
       pdfUrl: map['pdf_url'] as String? ?? map['cop_firmado'] as String?,
         copFecha: map['cop_fecha'] != null
@@ -115,10 +143,10 @@ class Predio {
       poligonoDwg: map['poligono_dwg'] as String?,
       oficio: map['oficio'] as String?,
       proyecto: map['proyecto'] as String?,
-      poligonoInsertado: map['poligono_insertado'] as bool? ?? false,
-      identificacion: map['identificacion'] as bool? ?? false,
-      levantamiento: map['levantamiento'] as bool? ?? false,
-      negociacion: map['negociacion'] as bool? ?? false,
+      poligonoInsertado: _asBool(map['poligono_insertado']),
+      identificacion: _asBool(map['identificacion']),
+      levantamiento: _asBool(map['levantamiento']),
+      negociacion: _asBool(map['negociacion']),
       situacionSocial: map['situacion_social'] as String?,
       latitud: (map['latitud'] as num?)?.toDouble(),
       longitud: (map['longitud'] as num?)?.toDouble(),
@@ -143,6 +171,7 @@ class Predio {
       'ejido': ejido,
       'estado': estado,
       'municipio': municipio,
+        if (archivoId != null) 'archivo_id': archivoId,
       'km_inicio': kmInicio,
       'km_fin': kmFin,
       'km_lineales': kmLineales,
@@ -190,6 +219,7 @@ class Predio {
     String? ejido,
     String? estado,
     String? municipio,
+      String? archivoId,
     double? kmInicio,
     double? kmFin,
     double? kmLineales,
@@ -224,6 +254,7 @@ class Predio {
       ejido: ejido ?? this.ejido,
       estado: estado ?? this.estado,
       municipio: municipio ?? this.municipio,
+        archivoId: archivoId ?? this.archivoId,
       kmInicio: kmInicio ?? this.kmInicio,
       kmFin: kmFin ?? this.kmFin,
       kmLineales: kmLineales ?? this.kmLineales,

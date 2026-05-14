@@ -88,7 +88,8 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
     final fmap = _asStringDynamicMap(features[i]);
     if (fmap == null) continue;
 
-    final props = _asStringDynamicMap(fmap['properties']) ?? <String, dynamic>{};
+    final propsOriginal = _asStringDynamicMap(fmap['properties']) ?? <String, dynamic>{};
+    final props = GeoJsonMapper.normalizeProperties(propsOriginal);
     final geometry = _asStringDynamicMap(fmap['geometry']);
 
     final claveActual = _pickVal(props, const [
@@ -126,8 +127,10 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
           props['area_m2'],
     );
     final superficieQgis = superficieExistente ?? 0;
+    final estatusNormalizado = _extractNormalizedStatus(props, fmap);
 
-    final propsEnriched = Map<String, dynamic>.from(props)
+    final propsEnriched = Map<String, dynamic>.from(propsOriginal)
+      ..addAll(props)
       ..['clave_catastral'] =
           ((props['clave_catastral']?.toString().trim().isNotEmpty ?? false)
               ? props['clave_catastral']
@@ -139,8 +142,15 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
       ..['superficie'] = superficieQgis
       ..['area_m2'] = superficieQgis;
 
+    if (estatusNormalizado != null) {
+      propsEnriched['estatus'] = estatusNormalizado;
+      propsEnriched['estatus_predio'] = estatusNormalizado;
+      propsEnriched['_estatusColorKey'] = estatusNormalizado;
+    }
+
     enrichedFeatures.add({
       ...fmap,
+      '_geojsonBackgroundNormalized': true,
       'properties': propsEnriched,
       'geometry': geometry,
     });
@@ -201,6 +211,18 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
     'cad_fin',
     'km_f',
   ];
+  const aliasEstatus = [
+    'estatus',
+    'ESTATUS',
+    'estatus_predio',
+    'ESTATUS_PREDIO',
+    'status',
+    'STATUS',
+    'estado_liberacion',
+    'ESTADO_LIBERACION',
+    'liberacion',
+    'LIBERACION',
+  ];
 
   final camposDetect = <String, int>{};
   for (final f in enrichedFeatures) {
@@ -226,6 +248,9 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
     if (_pickVal(p, aliasKmFin) != null) {
       camposDetect['km_fin'] = (camposDetect['km_fin'] ?? 0) + 1;
     }
+    if (_pickVal(p, aliasEstatus) != null) {
+      camposDetect['estatus'] = (camposDetect['estatus'] ?? 0) + 1;
+    }
   }
 
   final preview = enrichedFeatures.take(5).map((featureMap) {
@@ -243,6 +268,7 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
           normalizedProps['area'] ??
           normalizedProps['area_m2'] ??
           0,
+      'estatus': _pickVal(normalizedProps, aliasEstatus) ?? 'Sin estatus',
       'tipo_geom': _asStringDynamicMap(featureMap['geometry'])?['type'],
     };
   }).toList(growable: false);
@@ -318,4 +344,121 @@ double? _toDouble(dynamic value) {
     return double.tryParse(normalized);
   }
   return null;
+}
+
+String? _extractNormalizedStatus(
+  Map<String, dynamic> props,
+  Map<String, dynamic> feature,
+) {
+  final candidates = <String?>[];
+
+  const directKeys = [
+    'estatus',
+    'ESTATUS',
+    'estatus_predio',
+    'ESTATUS_PREDIO',
+    'status',
+    'STATUS',
+    'estado_liberacion',
+    'ESTADO_LIBERACION',
+    'liberacion',
+    'LIBERACION',
+    'estatus_juridico',
+    'ESTATUS_JURIDICO',
+  ];
+
+  for (final key in directKeys) {
+    candidates.add(props[key]?.toString());
+  }
+
+  for (final entry in props.entries) {
+    final normalizedKey = _normalizeStatusKey(entry.key);
+    if (normalizedKey == 'estatus' ||
+        normalizedKey == 'estatuspredio' ||
+        normalizedKey == 'status' ||
+        normalizedKey == 'estadoliberacion' ||
+        normalizedKey == 'liberacion' ||
+        normalizedKey == 'estatusjuridico' ||
+        normalizedKey == 'situacionjuridica' ||
+        normalizedKey.startsWith('estatus')) {
+      candidates.add(entry.value?.toString());
+    }
+  }
+
+  for (final entry in feature.entries) {
+    if (entry.key == 'properties' || entry.key == 'geometry' || entry.key == 'type') {
+      continue;
+    }
+    final normalizedKey = _normalizeStatusKey(entry.key);
+    if (normalizedKey == 'estatus' || normalizedKey.startsWith('estatus')) {
+      candidates.add(entry.value?.toString());
+    }
+  }
+
+  for (final candidate in candidates) {
+    final normalized = _normalizeStatusValue(candidate);
+    if (normalized != null) return normalized;
+  }
+
+  return null;
+}
+
+String _normalizeStatusKey(String key) {
+  return key
+      .toLowerCase()
+      .replaceAll('á', 'a')
+      .replaceAll('é', 'e')
+      .replaceAll('í', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ú', 'u')
+      .replaceAll('ñ', 'n')
+      .replaceAll(RegExp(r'[^a-z0-9]'), '');
+}
+
+String? _normalizeStatusValue(String? value) {
+  if (value == null) return null;
+  final compact = value
+      .trim()
+      .toLowerCase()
+      .replaceAll('á', 'a')
+      .replaceAll('é', 'e')
+      .replaceAll('í', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ú', 'u')
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  if (compact.isEmpty || compact == 'null') return null;
+  if (compact == '1' || compact == 'true' || compact == 'si') return 'Liberado';
+  if (compact == '0' || compact == 'false' || compact == 'no') return 'No liberado';
+  if (compact.contains('no liberad') ||
+      compact.contains('no firmado') ||
+      compact.contains('no autorizado') ||
+      compact.contains('pendiente') ||
+      compact.contains('en proceso')) {
+    return 'No liberado';
+  }
+  if (compact.contains('liberad') || compact.contains('firmado')) {
+    return 'Liberado';
+  }
+  if (compact.contains('sin estatus') || compact.contains('sin estado') || compact.contains('sin dato')) {
+    return 'Sin estatus';
+  }
+  return 'Sin estatus';
+}
+
+List<Map<String, dynamic>> _normalizeFeatures(List<Map<String, dynamic>> features) {
+  return features.map((feature) {
+    final properties = feature['properties'] as Map<String, dynamic>? ?? {};
+    final normalizedProperties = GeoJsonMapper.normalizeProperties(properties);
+    if (!normalizedProperties.containsKey('estatus')) {
+      normalizedProperties['estatus'] = 'Sin estatus';
+    }
+    return {
+      ...feature,
+      'properties': normalizedProperties,
+    };
+  }).toList();
 }

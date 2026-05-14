@@ -35,6 +35,7 @@ class ImportedFile {
   });
 
   ImportedFile copyWith({
+    int? featureCount,
     String? bdId,
     bool? guardadoEnBD,
     bool? sincronizado,
@@ -46,7 +47,7 @@ class ImportedFile {
     return ImportedFile(
       id: id,
       name: name,
-      featureCount: featureCount,
+      featureCount: featureCount ?? this.featureCount,
       importedAt: importedAt,
       features: features ?? this.features,
       bdId: bdId ?? this.bdId,
@@ -117,8 +118,9 @@ class CargaNotifier extends StateNotifier<List<ImportedFile>> {
     int creados = 0,
     int errores = 0,
     int? rowCount,
+     String? fileId,
   }) {
-    final id = bdId ?? DateTime.now().millisecondsSinceEpoch.toString();
+      final id = fileId ?? bdId ?? DateTime.now().millisecondsSinceEpoch.toString();
     final file = ImportedFile(
       id: id,
       name: name,
@@ -137,6 +139,42 @@ class CargaNotifier extends StateNotifier<List<ImportedFile>> {
 
   void removeFile(String id) {
     state = state.where((f) => f.id != id).toList();
+  }
+
+  void updateFileFeatures(String id, List<Map<String, dynamic>> features) {
+    state = [
+      for (final file in state)
+        if (file.id == id) file.copyWith(features: features) else file,
+    ];
+  }
+
+  void updateFileSyncResult(
+    String id, {
+    required List<Map<String, dynamic>> features,
+    required bool sincronizado,
+    required int encontrados,
+    required int creados,
+    required int errores,
+    String? bdId,
+    bool? guardadoEnBD,
+    int? featureCount,
+  }) {
+    state = [
+      for (final file in state)
+        if (file.id == id)
+          file.copyWith(
+            features: features,
+            sincronizado: sincronizado,
+            encontrados: encontrados,
+            creados: creados,
+            errores: errores,
+            bdId: bdId ?? file.bdId,
+            guardadoEnBD: guardadoEnBD ?? file.guardadoEnBD,
+            featureCount: featureCount ?? file.featureCount,
+          )
+        else
+          file,
+    ];
   }
 
   ImportedFile? getFile(String id) {

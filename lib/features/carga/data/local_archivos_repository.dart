@@ -94,6 +94,7 @@ class LocalArchivosRepository {
   Future<Map<String, dynamic>> saveArchivo({
     required String nombre,
     required List<Map<String, dynamic>> features,
+    String? customId,
     int? rowCount,
     bool sincronizado = false,
     int encontrados = 0,
@@ -113,7 +114,7 @@ class LocalArchivosRepository {
     }).toList();
 
     final now = DateTime.now().toIso8601String();
-    final id = _uuid.v4();
+    final id = customId ?? _uuid.v4();
 
     // Guardar features completos en disco en desktop
     if (!kIsWeb) {
@@ -140,6 +141,60 @@ class LocalArchivosRepository {
 
     // Devolver entry con features completos para uso inmediato
     return <String, dynamic>{...entry, 'features': features};
+  }
+
+  Future<Map<String, dynamic>?> updateArchivo({
+    required String id,
+    List<Map<String, dynamic>>? features,
+    int? rowCount,
+    bool? sincronizado,
+    int? encontrados,
+    int? creados,
+    int? errores,
+  }) async {
+    final existing = await getArchivos();
+    final index = existing.indexWhere((entry) => entry['id'] == id);
+    if (index < 0) return null;
+
+    final current = existing[index];
+    final updatedFeatures = features ??
+        ((current['features'] as List?)
+                ?.cast<Map<String, dynamic>>()
+                .toList(growable: false) ??
+            const <Map<String, dynamic>>[]);
+
+    if (!kIsWeb && features != null) {
+      await _writeFeaturesFile(id, updatedFeatures);
+    }
+
+    final preview = updatedFeatures.length > 20
+        ? updatedFeatures.sublist(0, 20)
+        : updatedFeatures;
+    final now = DateTime.now().toIso8601String();
+
+    final updated = <String, dynamic>{
+      ...current,
+      'features_count': rowCount ?? current['features_count'] ?? updatedFeatures.length,
+      'features': preview,
+      'sincronizado': sincronizado ?? current['sincronizado'] ?? false,
+      'encontrados': encontrados ?? current['encontrados'] ?? 0,
+      'creados': creados ?? current['creados'] ?? 0,
+      'errores': errores ?? current['errores'] ?? 0,
+      'updated_at': now,
+    };
+
+    existing[index] = updated;
+    final indexEntries = existing.map((e) {
+      final previewFeatures = (e['features'] as List?)
+              ?.cast<Map<String, dynamic>>()
+              .take(20)
+              .toList() ??
+          [];
+      return <String, dynamic>{...e, 'features': previewFeatures};
+    }).toList();
+    await _saveIndex(indexEntries);
+
+    return <String, dynamic>{...updated, 'features': updatedFeatures};
   }
 
   Future<void> deleteArchivo(String id) async {

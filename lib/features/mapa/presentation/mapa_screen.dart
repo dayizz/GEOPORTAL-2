@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,8 +10,10 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../shared/widgets/app_scaffold.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../../auth/providers/demo_provider.dart';
 import '../../predios/models/predio.dart';
 import '../../predios/models/proyecto.dart';
@@ -20,7 +24,58 @@ import '../../predios/providers/local_predios_provider.dart';
 import '../../predios/providers/proyectos_provider.dart';
 import '../../propietarios/data/propietarios_repository.dart';
 import '../../propietarios/providers/propietarios_provider.dart';
+import '../../carga/utils/geojson_mapper.dart';
 import '../providers/mapa_provider.dart';
+
+Map<String, dynamic> normalizeFeatureProperties(Map<String, dynamic> properties) {
+  final normalized = GeoJsonMapper.normalizeProperties(properties);
+  normalized['estatus'] ??= 'Sin estatus';
+  normalized['tipo_propiedad'] ??= 'Sin tipo';
+  normalized['estado'] ??= 'Desconocido';
+  normalized['municipio'] ??= 'Desconocido';
+  normalized['ejido'] ??= 'No especificado';
+  return normalized;
+}
+
+Color polygonColor(Map<String, dynamic> properties) {
+  final estatus = _normalizeStatusLabel(properties['estatus']?.toString());
+  final tipoPropiedad = properties['tipo_propiedad']?.toString() ?? 'Sin tipo';
+
+  if (estatus == 'Liberado') {
+    return AppColors.liberadoColor;
+  }
+  if (estatus == 'No liberado') {
+    return AppColors.noLiberadoColor;
+  }
+  return AppColors.tipoPropiedadColor(tipoPropiedad);
+}
+
+String? _normalizeStatusLabel(String? value) {
+  if (value == null) return null;
+  final raw = value.trim();
+  if (raw.isEmpty) return null;
+
+  final compact = raw
+      .toLowerCase()
+      .replaceAll('á', 'a')
+      .replaceAll('é', 'e')
+      .replaceAll('í', 'i')
+      .replaceAll('ó', 'o')
+      .replaceAll('ú', 'u')
+      .replaceAll('ñ', 'n')
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  if (compact.contains('no liberad') || compact == 'no' || compact == 'false' || compact == '0') {
+    return 'No liberado';
+  }
+  if (compact.contains('liberad') || compact == 'si' || compact == 'sí' || compact == 'true' || compact == '1') {
+    return 'Liberado';
+  }
+  return null;
+}
 
 class MapaScreen extends ConsumerStatefulWidget {
   const MapaScreen({super.key});
@@ -30,11 +85,15 @@ class MapaScreen extends ConsumerStatefulWidget {
 }
 
 class _MapaScreenState extends ConsumerState<MapaScreen> {
+  static final Map<String, _PredioGeometryCacheEntry> _predioGeometryCache = {};
+  static final Map<int, _ImportedGeometryCacheEntry> _importedGeometryCache = {};
+
+  final ApiClient _apiClient = ApiClient();
   final MapController _mapCtrl = MapController();
   Predio? _selectedPredio;
   bool _showCapturaModal = false;
-  bool _showLayersPanel = false;
   bool _showVisualizacionPanel = false;
+  bool _showLayersPanel = false;
   bool _isDrawing = false;
   bool _isManualLinkMode = false;
   bool _isLinkingManual = false;
@@ -61,14 +120,33 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
   static const _defaultCenter = LatLng(20.72, -100.35);
   static const _defaultZoom = 10.0;
 
+  bool _initialFitDone = false;
+  double _currentZoom = _defaultZoom;
+  int? _lastImportedBatchSyncIdentity;
+  bool _isSyncingImportedStatuses = false;
+  Timer? _viewportStatusDebounce;
+  String? _lastViewportStatusKey;
+  DateTime? _lastViewportStatusAt;
+  final Map<String, Map<String, dynamic>> _estatusByPredioId = {};
+  final Map<String, Map<String, dynamic>> _estatusByClave = {};
+
   // Memoización de polígonos importados (deben ser de instancia, no static locales)
   List<Map<String, dynamic>>? _lastImportedFeatures;
   MapaColorMode? _lastColorMode;
+  int? _lastImportedZoomBucket;
+  String? _lastImportedPaletteKey;
   List<Polygon>? _lastImportedPolygons;
+  List<Marker>? _lastImportedMarkers;
+  LatLngBounds? _lastImportedBounds;
+  int? _lastImportedSelectionIndex;
   // Memoización de visuales
   List<Predio>? _lastPredios;
   MapaColorMode? _lastColorModeVisual;
+  int? _lastVisualZoomBucket;
   List<_PredioVisualData>? _lastVisuals;
+  LatLngBounds? _lastVisualBounds;
+  int? _lastPrediosWarmupIdentity;
+  bool _prediosWarmupRunning = false;
 
   @override
   void dispose() {
@@ -79,6 +157,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     _kmInicioCtrl.dispose();
     _kmFinCtrl.dispose();
     _manualPredioSearchCtrl.dispose();
+    _viewportStatusDebounce?.cancel();
     super.dispose();
   }
 
@@ -90,23 +169,20 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     final colorMode = ref.watch(mapaColorModeProvider);
     final importedFeatures = ref.watch(importedFeaturesProvider);
 
-    List<Polygon> importedPolygons;
-    if (_lastImportedFeatures == importedFeatures && _lastColorMode == colorMode) {
-      importedPolygons = _lastImportedPolygons ?? [];
-    } else {
-      importedPolygons = _buildImportedPolygons(importedFeatures, colorMode);
-      _lastImportedFeatures = importedFeatures;
-      _lastColorMode = colorMode;
-      _lastImportedPolygons = importedPolygons;
-    }
-
-    final importedMarkers = _buildImportedMarkers(
+    final importedData = _buildImportedLayerData(
       features: importedFeatures,
+      mode: colorMode,
       selectedFeatureIndex: _importedFeatureIndex,
     );
-    _focusImportedIfNeeded(importedFeatures, importedPolygons);
+    _scheduleViewportStatusSync(
+      bounds: importedData.bounds,
+      importedCount: importedFeatures.length,
+      immediate: true,
+    );
+    final importedPolygons = importedData.polygons;
+    final importedMarkers = importedData.markers;
+    _focusImportedIfNeeded(importedData.bounds);
 
-    // Focus desde Gestión/Propietarios: fly-to al predio solicitado.
     final focusId = ref.watch(focusPredioIdProvider);
     if (focusId != null) {
       final predio = prediosById[focusId];
@@ -118,8 +194,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           setState(() => _selectedPredio = predio);
         });
       } else {
-        // Predio no en prediosMapaProvider (ej: recién importado) →
-        // intentar en importedFeaturesProvider como fallback.
         final imported = ref.read(importedFeaturesProvider);
         final match = imported.cast<Map<String, dynamic>?>().firstWhere(
           (f) => f?['properties']?['_predioId']?.toString() == focusId,
@@ -143,7 +217,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
     }
 
-    // Solicitud desde Gestión: abrir modo de vinculación manual para un predio.
     final manualVincularPredioId = ref.watch(manualVincularPredioIdProvider);
     if (manualVincularPredioId != null) {
       prediosAsync.whenData((predios) {
@@ -178,13 +251,17 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         children: [
           prediosAsync.when(
             data: (predios) {
+              final currentVisualZoomBucket = _zoomBucketFor(_currentZoom);
               List<_PredioVisualData> visuals;
-              if (_lastPredios == predios && _lastColorModeVisual == colorMode) {
+              if (_lastPredios == predios &&
+                  _lastColorModeVisual == colorMode &&
+                  _lastVisualZoomBucket == currentVisualZoomBucket) {
                 visuals = _lastVisuals ?? [];
               } else {
-                visuals = _buildVisualData(predios, colorMode);
+                visuals = _buildVisualData(predios, colorMode).visuals;
                 _lastPredios = predios;
                 _lastColorModeVisual = colorMode;
+                _lastVisualZoomBucket = currentVisualZoomBucket;
                 _lastVisuals = visuals;
               }
               final selectedVisual = _selectedPredio == null
@@ -198,8 +275,28 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                 options: MapOptions(
                   initialCenter: _defaultCenter,
                   initialZoom: _defaultZoom,
+                  onPositionChanged: (position, hasGesture) {
+                    final nextZoom = position.zoom;
+                    if (nextZoom == null) return;
+                    final prevBucket = _zoomBucketFor(_currentZoom);
+                    final nextBucket = _zoomBucketFor(nextZoom);
+                    if (prevBucket != nextBucket) {
+                      setState(() {
+                        _currentZoom = nextZoom;
+                      });
+                    } else {
+                      _currentZoom = nextZoom;
+                    }
+
+                    final importedCount = ref.read(importedFeaturesProvider).length;
+                    if (importedCount > 0) {
+                      _scheduleViewportStatusSync(
+                        bounds: _extractBoundsFromPosition(position),
+                        importedCount: importedCount,
+                      );
+                    }
+                  },
                   onTap: (_, point) {
-                    // Predios guardados en DB
                     final tappedVisual = _findVisualAtPoint(point, visuals);
                     var shouldAutofillUbicacion = false;
                     int? importedIdxToOpen;
@@ -239,7 +336,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                           _detectedAreaM2 = _calculateAreaSquareMeters(_draftPoints);
                           shouldAutofillUbicacion = true;
 
-                          // ── Pre-rellenar formulario con datos del predio seleccionado ──
                           final predio = tappedVisual.predio;
                           final nombrePropOwner = predio.propietario != null
                               ? predio.propietario!.nombreCompleto.trim()
@@ -266,25 +362,25 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                                 predio.poligonoDwg ?? '',
                                 predio.claveCatastral,
                               ].join(' '));
+
+                          // Mantener el tramo existente cuando no hay campo segmento en el modelo.
+                          _tramoCtrl.text = predio.tramo.trim();
                         }
                         return;
                       }
 
-                      // Buscar en polígonos importados (naranja) cuando modo selección activo
                       if (_isDrawing) {
                         final currentImported = ref.read(importedFeaturesProvider);
                         final importedIdx = _findImportedAtPoint(point, currentImported);
                         if (importedIdx != null) {
                           importedIdxToOpen = importedIdx;
                         }
-                        // Toque fuera de cualquier polígono → no borrar draft, no hacer nada
                         return;
                       }
 
                       _selectedPredio = null;
                     });
 
-                    // Abrir captura fuera del setState para evitar setState anidado
                     if (importedIdxToOpen != null) {
                       final currentImported = ref.read(importedFeaturesProvider);
                       if (importedIdxToOpen! < currentImported.length) {
@@ -312,7 +408,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                         .map((v) => v.polygon!)
                         .toList(),
                   ),
-                  // Capa de polígonos importados desde GeoJSON (naranja / pendientes de captura)
                   if (importedPolygons.isNotEmpty)
                     PolygonLayer(
                       polygons: importedPolygons,
@@ -325,7 +420,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                           .map(
                             (sp) => Polygon(
                               points: sp.points,
-                              color: _savedPolygonColor(sp, colorMode).withValues(alpha: 0.46),
+                              color: _savedPolygonColor(sp, colorMode).withValues(alpha: 0.62),
                               borderColor: _savedPolygonColor(sp, colorMode),
                               borderStrokeWidth: 2,
                             ),
@@ -337,30 +432,27 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                       polygons: [
                         Polygon(
                           points: _draftPoints,
-                          color: _draftPolygonColor(colorMode).withValues(alpha: 0.4),
-                          borderColor: _draftPolygonColor(colorMode).withValues(alpha: 0.4),
+                          color: _draftPolygonColor(colorMode).withValues(alpha: 0.58),
+                          borderColor: _draftPolygonColor(colorMode).withValues(alpha: 0.92),
                           borderStrokeWidth: 2,
                         ),
                       ],
                     ),
                   MarkerLayer(
-                    markers: selectedVisual != null && selectedVisual.markerPoint != null
-                        ? [
-                            Marker(
-                              point: selectedVisual.markerPoint!,
-                              width: 36,
-                              height: 36,
-                              child: GestureDetector(
-                                onTap: () => setState(() {
-                                  _selectedPredio = selectedVisual.predio;
-                                  _importedFeatureIndex = null;
-                                }),
-                                child: _buildMarkerDot(selectedVisual.color),
-                              ),
-                            ),
-                          ]
-                        : const [],
+                    markers: _buildSelectedPredioMarkers(selectedVisual),
                   ),
+                  if (baseLayer == MapaBaseLayer.satelital)
+                    TileLayer(
+                      urlTemplate: _labelsPlacesTileTemplate(),
+                      maxZoom: 19,
+                      userAgentPackageName: 'com.geoportal.predios',
+                    ),
+                  if (baseLayer == MapaBaseLayer.satelital)
+                    TileLayer(
+                      urlTemplate: _labelsRoadsTileTemplate(),
+                      maxZoom: 20,
+                      userAgentPackageName: 'com.geoportal.predios',
+                    ),
                 ],
               );
             },
@@ -457,7 +549,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
             left: 16,
             child: _buildCapturaToggleButton(),
           ),
-
           if (_showCapturaModal)
             Positioned(
               top: 72,
@@ -471,7 +562,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               right: 16,
               child: _buildPredioCard(_selectedPredio!),
             ),
-          // Banner "procesando importación" — bloquea interacción hasta que BD confirme
           if (ref.watch(importacionEstadoProvider) == ImportacionEstado.procesando)
             Positioned.fill(
               child: ColoredBox(
@@ -482,8 +572,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 32, vertical: 24),
+                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -496,8 +585,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                           const SizedBox(height: 4),
                           const Text(
                             'Los polígonos se pintarán cuando el backend confirme.',
-                            style: TextStyle(
-                                fontSize: 12, color: AppColors.textLight),
+                            style: TextStyle(fontSize: 12, color: AppColors.textLight),
                             textAlign: TextAlign.center,
                           ),
                         ],
@@ -508,8 +596,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               ),
             ),
         ],
-    ),
-  );
+      ),
+    );
   }
 
   String _tileTemplate(MapaBaseLayer layer) {
@@ -519,33 +607,129 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   }
 
-  List<_PredioVisualData> _buildVisualData(
+  String _labelsPlacesTileTemplate() {
+    return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+  }
+
+  String _labelsRoadsTileTemplate() {
+    return 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}';
+  }
+
+  _VisualLayerData _buildVisualData(
     List<Predio> predios,
     MapaColorMode mode,
   ) {
-    return predios.map((predio) {
+    final sw = Stopwatch()..start();
+    final visuals = <_PredioVisualData>[];
+    LatLngBounds? bounds;
+    final zoomBucket = _zoomBucketFor(_currentZoom);
+    var vertices = 0;
+
+    for (final predio in predios) {
       final color = _predioColor(predio, mode);
-      final rings = _extractRings(predio.geometry);
+      final geometryCache = _getPredioGeometryCache(predio);
+      final rings = _simplifyRingsForZoom(geometryCache.rings, zoomBucket);
+      vertices += _countRingVertices(rings);
       final polygon = rings.isNotEmpty
           ? Polygon(
               points: rings.first,
               holePointsList: rings.length > 1 ? rings.sublist(1) : const [],
-              color: color.withValues(alpha: 0.46),
-              borderColor: color.withValues(alpha: 0.46),
-              borderStrokeWidth: 1.8,
+              color: color.withValues(alpha: 0.62),
+              borderColor: color.withValues(alpha: 0.96),
+              borderStrokeWidth: 2.1,
             )
           : null;
 
-      final markerPoint = _markerPoint(predio, rings);
+      bounds = _extendBoundsWithRings(bounds, rings);
 
-      return _PredioVisualData(
+      visuals.add(_PredioVisualData(
         predio: predio,
         color: color,
         rings: rings,
         polygon: polygon,
-        markerPoint: markerPoint,
+      ));
+    }
+
+    sw.stop();
+    if (kDebugMode && sw.elapsedMilliseconds >= 20) {
+      debugPrint(
+        '[map_perf] predios_visuals ms=${sw.elapsedMilliseconds} predios=${predios.length} vertices=$vertices zoomBucket=$zoomBucket',
       );
-    }).toList();
+    }
+
+    return _VisualLayerData(visuals: visuals, bounds: bounds);
+  }
+
+  _ImportedLayerData _buildImportedLayerData({
+    required List<Map<String, dynamic>> features,
+    required MapaColorMode mode,
+    required int? selectedFeatureIndex,
+  }) {
+    final sw = Stopwatch()..start();
+    final zoomBucket = _zoomBucketFor(_currentZoom);
+    final paletteKey =
+        '${AppColors.liberadoColor.value}-${AppColors.noLiberadoColor.value}';
+    if (_lastImportedFeatures == features &&
+        _lastColorMode == mode &&
+        _lastImportedZoomBucket == zoomBucket &&
+        _lastImportedPaletteKey == paletteKey &&
+        _lastImportedSelectionIndex == selectedFeatureIndex &&
+        _lastImportedPolygons != null &&
+        _lastImportedMarkers != null) {
+      return _ImportedLayerData(
+        polygons: _lastImportedPolygons!,
+        markers: _lastImportedMarkers!,
+        bounds: _lastImportedBounds,
+      );
+    }
+
+    final polygons = <Polygon>[];
+    LatLngBounds? bounds;
+    var vertices = 0;
+    for (int i = 0; i < features.length; i++) {
+      final feature = features[i];
+      final geometryCache = _getImportedGeometryCache(feature);
+      final extractedPolygons =
+          _simplifyPolygonsForZoom(geometryCache.polygons, zoomBucket);
+      final color = _importedFeatureColor(feature, mode);
+      for (final rings in extractedPolygons) {
+        if (rings.isEmpty || rings.first.length < 3) continue;
+        vertices += _countRingVertices(rings);
+        polygons.add(
+          Polygon(
+            points: rings.first,
+            holePointsList: rings.length > 1 ? rings.sublist(1) : const [],
+            color: color.withValues(alpha: 0.46),
+            borderColor: color.withValues(alpha: 0.90),
+            borderStrokeWidth: 2.4,
+          ),
+        );
+        bounds = _extendBoundsWithRings(bounds, rings);
+      }
+    }
+
+    final markers = _buildImportedMarkers(
+      features: features,
+      selectedFeatureIndex: selectedFeatureIndex,
+    );
+
+    _lastImportedFeatures = features;
+    _lastColorMode = mode;
+    _lastImportedZoomBucket = zoomBucket;
+    _lastImportedPaletteKey = paletteKey;
+    _lastImportedSelectionIndex = selectedFeatureIndex;
+    _lastImportedPolygons = polygons;
+    _lastImportedMarkers = markers;
+    _lastImportedBounds = bounds;
+
+    sw.stop();
+    if (kDebugMode && sw.elapsedMilliseconds >= 20) {
+      debugPrint(
+        '[map_perf] imported_visuals ms=${sw.elapsedMilliseconds} features=${features.length} vertices=$vertices zoomBucket=$zoomBucket',
+      );
+    }
+
+    return _ImportedLayerData(polygons: polygons, markers: markers, bounds: bounds);
   }
 
   _PredioVisualData? _findVisualAtPoint(LatLng point, List<_PredioVisualData> visuals) {
@@ -560,6 +744,30 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
     }
     return null;
+  }
+
+  List<Marker> _buildSelectedPredioMarkers(_PredioVisualData? selectedVisual) {
+    if (selectedVisual == null || selectedVisual.rings.isEmpty) {
+      return const [];
+    }
+
+    final markerPoint = _pointForPolygonRings(selectedVisual.rings);
+    if (markerPoint == null) return const [];
+
+    return [
+      Marker(
+        point: markerPoint,
+        width: 36,
+        height: 36,
+        child: GestureDetector(
+          onTap: () => setState(() {
+            _selectedPredio = selectedVisual.predio;
+            _importedFeatureIndex = null;
+          }),
+          child: _buildMarkerDot(selectedVisual.color),
+        ),
+      ),
+    ];
   }
 
   bool _pointInRing(LatLng point, List<LatLng> ring) {
@@ -653,29 +861,52 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
 
     final feature = features[selectedFeatureIndex];
-    final geometry = _geometryAsMap(feature['geometry']);
-    final polygons = _extractPolygons(geometry);
+    final polygons = _getImportedGeometryCache(feature).polygons;
     final center = _centroidOfPolygons(polygons);
     if (center == null) return const [];
+    final props = feature['properties'] is Map
+        ? Map<String, dynamic>.from(feature['properties'] as Map)
+        : <String, dynamic>{};
+    final statusLabel = _normalizeEstatusText(
+          props['_estatusColorKey']?.toString() ??
+              props['estatus']?.toString() ??
+              props['ESTATUS']?.toString(),
+        ) ??
+        'Sin estatus';
 
     return [
       Marker(
         point: center,
-        width: 22,
-        height: 22,
-        child: Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFFF8C00),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x66FF8C00),
-                blurRadius: 8,
-                spreadRadius: 1,
+        width: 140,
+        height: 64,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(999),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x22000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
               ),
-            ],
-          ),
+              child: Text(
+                statusLabel,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: _estatusColor(statusLabel),
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            _buildMarkerDot(const Color(0xFFFF8C00)),
+          ],
         ),
       ),
     ];
@@ -909,7 +1140,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
   /// Centra el mapa en el predio dado (polígono o punto).
   void _flyToPredio(Predio predio) {
     try {
-      final rings = _extractRings(predio.geometry);
+      final rings = _getPredioGeometryCache(predio).rings;
       if (rings.isNotEmpty && rings.first.isNotEmpty) {
         final allPoints = <LatLng>[];
         for (final ring in rings) {
@@ -968,28 +1199,15 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
   }
 
-  void _focusImportedIfNeeded(List<Map<String, dynamic>> features, List<Polygon> polygons) {    if (features.isEmpty || polygons.isEmpty) {
+  void _focusImportedIfNeeded(LatLngBounds? bounds) {
+    if (bounds == null) {
       _lastImportedFeaturesIdentity = null;
       return;
     }
 
-    final identity = identityHashCode(features);
+    final identity = identityHashCode(bounds);
     if (_lastImportedFeaturesIdentity == identity) return;
     _lastImportedFeaturesIdentity = identity;
-
-    final allPoints = <LatLng>[];
-    for (final polygon in polygons) {
-      allPoints.addAll(polygon.points);
-      for (final hole in polygon.holePointsList ?? const <List<LatLng>>[]) {
-        allPoints.addAll(hole);
-      }
-    }
-    if (allPoints.isEmpty) return;
-
-    final bounds = LatLngBounds(allPoints.first, allPoints.first);
-    for (final point in allPoints.skip(1)) {
-      bounds.extend(point);
-    }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1004,6 +1222,114 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         // Si el controlador aún no está listo, el usuario puede navegar manualmente.
       }
     });
+  }
+
+  LatLngBounds? _extendBoundsWithRings(
+    LatLngBounds? bounds,
+    List<List<LatLng>> rings,
+  ) {
+    for (final ring in rings) {
+      for (final point in ring) {
+        if (bounds == null) {
+          bounds = LatLngBounds(point, point);
+        } else {
+          bounds.extend(point);
+        }
+      }
+    }
+    return bounds;
+  }
+
+  _PredioGeometryCacheEntry _getPredioGeometryCache(Predio predio) {
+    final key = _predioGeometryCacheKey(predio);
+    final cached = _predioGeometryCache[key];
+    if (cached != null) return cached;
+
+    final rings = _extractRings(predio.geometry);
+    final entry = _PredioGeometryCacheEntry(
+      rings: rings,
+      markerPoint: _markerPoint(predio, rings),
+    );
+    _predioGeometryCache[key] = entry;
+    return entry;
+  }
+
+  void _schedulePredioGeometryWarmup(List<Predio> predios) {
+    final identity = identityHashCode(predios);
+    if (_lastPrediosWarmupIdentity == identity || _prediosWarmupRunning) {
+      return;
+    }
+
+    _lastPrediosWarmupIdentity = identity;
+    _prediosWarmupRunning = true;
+
+    final payload = predios
+        .map((predio) => <String, dynamic>{
+              'key': _predioGeometryCacheKey(predio),
+              'geometry': predio.geometry,
+            })
+        .toList(growable: false);
+
+    compute(_preparePredioGeometryWarmup, payload).then((entries) {
+      if (!mounted) return;
+      for (final entry in entries) {
+        final key = entry['key']?.toString();
+        final ringsRaw = entry['rings'];
+        if (key == null || ringsRaw is! List) continue;
+        if (_predioGeometryCache.containsKey(key)) continue;
+
+        final rings = <List<LatLng>>[];
+        for (final ringRaw in ringsRaw.whereType<List>()) {
+          final ring = <LatLng>[];
+          for (final pointRaw in ringRaw.whereType<List>()) {
+            if (pointRaw.length < 2) continue;
+            final lat = (pointRaw[0] as num?)?.toDouble();
+            final lng = (pointRaw[1] as num?)?.toDouble();
+            if (lat == null || lng == null) continue;
+            ring.add(LatLng(lat, lng));
+          }
+          if (ring.length >= 3) {
+            rings.add(ring);
+          }
+        }
+
+        _predioGeometryCache[key] = _PredioGeometryCacheEntry(
+          rings: rings,
+          markerPoint: rings.isNotEmpty ? _pointForPolygonRings(rings) : null,
+        );
+      }
+      if (kDebugMode) {
+        debugPrint('[map_perf] warmup_predios entries=${entries.length}');
+      }
+      setState(() {});
+    }).whenComplete(() {
+      _prediosWarmupRunning = false;
+    });
+  }
+
+  _ImportedGeometryCacheEntry _getImportedGeometryCache(
+    Map<String, dynamic> feature,
+  ) {
+    final key = identityHashCode(feature);
+    final cached = _importedGeometryCache[key];
+    if (cached != null) return cached;
+
+    final entry = _ImportedGeometryCacheEntry(
+      polygons: _extractPolygons(_geometryAsMap(feature['geometry'])),
+    );
+    _importedGeometryCache[key] = entry;
+    return entry;
+  }
+
+  String _predioGeometryCacheKey(Predio predio) {
+    final stamp = predio.updatedAt ?? predio.createdAt;
+    return [
+      predio.id,
+      stamp.microsecondsSinceEpoch.toString(),
+      predio.latitud?.toString() ?? '',
+      predio.longitud?.toString() ?? '',
+      predio.geometry?['type']?.toString() ?? '',
+    ].join('|');
   }
 
   Map<String, dynamic>? _geometryAsMap(dynamic geometry) {
@@ -1262,7 +1588,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               const SizedBox(height: 6),
               _layerButton(
                 title: 'Satelital',
-                subtitle: 'Imagen aérea',
+                subtitle: 'Imagen aérea + etiquetas',
                 icon: Icons.satellite_alt_outlined,
                 selected: isSatelital,
                 onTap: () {
@@ -1481,7 +1807,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                     width: 22,
                     height: 22,
                     decoration: BoxDecoration(
-                      shape: BoxShape.circle,
+                      shape: BoxShape.rectangle,
                       border: Border.all(color: const Color(0xFFD9D9D9)),
                     ),
                     child: const Icon(Icons.close, size: 13, color: Color(0xFF7A7A7A)),
@@ -1748,7 +2074,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                     _formatArea(area),
                     style: const TextStyle(fontSize: 12, color: Colors.black, fontWeight: FontWeight.w700),
                   ),
-                  if (_detectingUbicacion) ...[  
+                  if (_detectingUbicacion) ...[
                     const SizedBox(width: 8),
                     const Text('Detectando ubicación...', style: TextStyle(fontSize: 11, color: Color(0xFF6A6A6A))),
                   ],
@@ -2417,8 +2743,12 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
 
   /// Devuelve el índice del primer feature importado que contiene [point].
   int? _findImportedAtPoint(LatLng point, List<Map<String, dynamic>> features) {
+    final zoomBucket = _zoomBucketFor(_currentZoom);
     for (int i = features.length - 1; i >= 0; i--) {
-      final polygons = _extractPolygons(_geometryAsMap(features[i]['geometry']));
+      final polygons = _simplifyPolygonsForZoom(
+        _getImportedGeometryCache(features[i]).polygons,
+        zoomBucket,
+      );
       if (polygons.isEmpty) continue;
       for (final rings in polygons) {
         if (rings.isEmpty) continue;
@@ -2428,6 +2758,123 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     return null;
   }
 
+  int _zoomBucketFor(double zoom) {
+    final z = zoom.floor();
+    if (z < 6) return 6;
+    if (z > 19) return 19;
+    return z;
+  }
+
+  double _simplificationToleranceForBucket(int zoomBucket) {
+    if (zoomBucket <= 8) return 0.0009;
+    if (zoomBucket <= 10) return 0.00045;
+    if (zoomBucket <= 12) return 0.0002;
+    if (zoomBucket <= 14) return 0.00008;
+    return 0.0;
+  }
+
+  List<List<LatLng>> _simplifyRingsForZoom(
+    List<List<LatLng>> rings,
+    int zoomBucket,
+  ) {
+    final tolerance = _simplificationToleranceForBucket(zoomBucket);
+    if (tolerance <= 0) return rings;
+
+    return rings
+        .map((ring) => _simplifyRing(ring, tolerance))
+        .where((ring) => ring.length >= 3)
+        .toList(growable: false);
+  }
+
+  List<List<List<LatLng>>> _simplifyPolygonsForZoom(
+    List<List<List<LatLng>>> polygons,
+    int zoomBucket,
+  ) {
+    final tolerance = _simplificationToleranceForBucket(zoomBucket);
+    if (tolerance <= 0) return polygons;
+
+    final result = <List<List<LatLng>>>[];
+    for (final rings in polygons) {
+      final simplified = rings
+          .map((ring) => _simplifyRing(ring, tolerance))
+          .where((ring) => ring.length >= 3)
+          .toList(growable: false);
+      if (simplified.isNotEmpty) {
+        result.add(simplified);
+      }
+    }
+    return result;
+  }
+
+  List<LatLng> _simplifyRing(List<LatLng> ring, double tolerance) {
+    if (ring.length <= 6) return ring;
+    final isClosed = ring.first == ring.last;
+    final openRing = isClosed ? ring.sublist(0, ring.length - 1) : ring;
+    if (openRing.length <= 3) return ring;
+
+    final simplified = _douglasPeucker(openRing, tolerance);
+    if (simplified.length < 3) return ring;
+
+    if (!isClosed) {
+      return simplified;
+    }
+    final closed = List<LatLng>.from(simplified)..add(simplified.first);
+    return closed;
+  }
+
+  List<LatLng> _douglasPeucker(List<LatLng> points, double epsilon) {
+    if (points.length < 3) return points;
+
+    var maxDistance = 0.0;
+    var index = 0;
+    final start = points.first;
+    final end = points.last;
+
+    for (int i = 1; i < points.length - 1; i++) {
+      final d = _perpendicularDistance(points[i], start, end);
+      if (d > maxDistance) {
+        index = i;
+        maxDistance = d;
+      }
+    }
+
+    if (maxDistance <= epsilon) {
+      return [start, end];
+    }
+
+    final left = _douglasPeucker(points.sublist(0, index + 1), epsilon);
+    final right = _douglasPeucker(points.sublist(index), epsilon);
+    return [...left.sublist(0, left.length - 1), ...right];
+  }
+
+  double _perpendicularDistance(LatLng point, LatLng start, LatLng end) {
+    final dx = end.longitude - start.longitude;
+    final dy = end.latitude - start.latitude;
+    if (dx == 0 && dy == 0) {
+      final lx = point.longitude - start.longitude;
+      final ly = point.latitude - start.latitude;
+      return math.sqrt((lx * lx) + (ly * ly));
+    }
+
+    final t = (((point.longitude - start.longitude) * dx) +
+            ((point.latitude - start.latitude) * dy)) /
+        ((dx * dx) + (dy * dy));
+    final clampedT = t.clamp(0.0, 1.0);
+    final px = start.longitude + (clampedT * dx);
+    final py = start.latitude + (clampedT * dy);
+    final sx = point.longitude - px;
+    final sy = point.latitude - py;
+    return math.sqrt((sx * sx) + (sy * sy));
+  }
+
+  int _countRingVertices(List<List<LatLng>> rings) {
+    var count = 0;
+    for (final ring in rings) {
+      count += ring.length;
+    }
+    return count;
+  }
+
   /// Abre el modal de captura pre-relleno con los datos del feature importado.
   void _openCapturaForImportedFeature(Map<String, dynamic> feature, int idx) {
     final rawProps = feature['properties'];
@@ -2435,7 +2882,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         ? Map<String, dynamic>.from(rawProps)
         : <String, dynamic>{};
     final allProps = _flattenFeatureProps(feature, props);
-    final rings = _extractRings(_geometryAsMap(feature['geometry']));
+    final polygons = _getImportedGeometryCache(feature).polygons;
+    final rings = polygons.isNotEmpty ? polygons.first : const <List<LatLng>>[];
     final points = rings.isNotEmpty ? List<LatLng>.from(rings.first) : <LatLng>[];
     if (points.length > 1 &&
         (points.first.latitude != points.last.latitude ||
@@ -2483,7 +2931,16 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       _estadoCtrl.text = _propValue(allProps, ['estado', 'entidad', 'state']) ?? '';
       _municipioCtrl.text = _propValue(allProps, ['municipio', 'municipality', 'city', 'alcaldia']) ?? '';
       _tipoPropiedad = _propValue(allProps, ['tipo_propiedad', 'tipopropiedad', 'uso_suelo', 'usosuelo']);
-      _estatusPredio = null;
+      // Usar búsqueda amplia de clave para detectar ESTATUS, ESTATUS_PREDIO, etc.
+      final estatusRaw = _rawStatusFromGeoJson(allProps) ??
+          _propValue(allProps, [
+            'estatus_predio',
+            'estatus',
+            'estado_predio',
+            'situacion',
+            'status',
+          ]);
+      _estatusPredio = _normalizeEstatusText(estatusRaw);
         _proyecto = _normalizeProyecto(proyectoDetectado) ??
           _inferProyectoFromText([
           proyectoDetectado ?? '',
@@ -2492,6 +2949,10 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         _propValue(allProps, ['poligono_dwg', 'dwg']) ?? '',
         _propValue(allProps, ['clave_catastral', 'clave']) ?? '',
           ].join(' '));
+
+      _manualFeatureIndex = idx;
+      _manualSelectedPredioId = null;
+      _manualPredioSearchCtrl.clear();
     });
     if (_estadoCtrl.text.isEmpty || _municipioCtrl.text.isEmpty) {
       _autofillEstadoMunicipioDesdePoligono();
@@ -2759,6 +3220,24 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     final props = feature['properties'];
     final propsMap = props is Map ? Map<String, dynamic>.from(props) : <String, dynamic>{};
     final allProps = _flattenFeatureProps(feature, propsMap);
+    final normalizedProps = normalizeFeatureProperties(allProps);
+
+    // Buscar el estatus sin depender de normalizedProps['estatus'] que siempre
+    // tiene el valor por defecto 'Sin estatus' (no nulo), bloqueando la cadena ??.
+    final rawStatusSource = allProps['_estatusColorKey']?.toString() ??
+        _rawStatusFromGeoJson(allProps);
+    // Solo usar normalizedProps si encontró un valor real (distinto al default).
+    final normalizedEstatus = normalizedProps['estatus']?.toString();
+    final estatusPreferido = _normalizeStatusLabel(
+      rawStatusSource ??
+          (normalizedEstatus != 'Sin estatus' ? normalizedEstatus : null),
+    );
+    if (estatusPreferido == 'Liberado') {
+      return AppColors.liberadoColor;
+    }
+    if (estatusPreferido == 'No liberado') {
+      return AppColors.noLiberadoColor;
+    }
 
     if (mode == MapaColorMode.tipoPropiedad) {
       final tipo = _propValue(allProps, [
@@ -2776,28 +3255,353 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       'estatus',
       'estado_predio',
       'situacion',
+      'status',
+      'estatus_juridico',
+      'liberacion',
+      'estado_liberacion',
     ]);
 
-    if (estatus != null) {
-      final normalized = estatus.trim().toLowerCase();
-      if (normalized == 'liberado') return _estatusColor('Liberado');
-      if (normalized == 'no liberado') return _estatusColor('No liberado');
+    final predioRef = _extractFeaturePredioRef(allProps);
+    final remoteStatus = _statusFromBackend(predioRef.$1, predioRef.$2);
+    final effectiveStatus = _normalizeStatusLabel(
+      rawStatusSource ??
+          (normalizedEstatus != 'Sin estatus' ? normalizedEstatus : null) ??
+          estatus ??
+          remoteStatus,
+    );
+    if (effectiveStatus == 'Liberado') {
+      return AppColors.liberadoColor;
+    }
+    if (effectiveStatus == 'No liberado') {
+      return AppColors.noLiberadoColor;
+    }
+
+    final cop = _featureBoolValue(allProps, ['cop', '_cop']);
+    if (cop == true) {
+      return _estatusColor('Liberado');
+    }
+
+    final noLiberado = _featureBoolValue(allProps, ['negociacion', '_negociacion']) == true ||
+        _featureBoolValue(allProps, ['levantamiento', '_levantamiento']) == true ||
+        _featureBoolValue(allProps, ['identificacion', '_identificacion']) == true;
+    if (noLiberado) {
+      return _estatusColor('No liberado');
     }
 
     return _estatusColor(null);
   }
 
+  String? _rawStatusFromGeoJson(Map<String, dynamic> props) {
+    const preferredKeys = [
+      'estatus',
+      'estatus_predio',
+      'status',
+      'estado_liberacion',
+      'liberacion',
+      'estatus_juridico',
+    ];
+
+    for (final key in preferredKeys) {
+      if (!props.containsKey(key)) continue;
+      final value = props[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+
+    for (final entry in props.entries) {
+      final normalizedKey = _normalizeStatusKey(entry.key);
+      final looksLikeStatusKey = normalizedKey == 'estatus' ||
+          normalizedKey == 'estatuspredio' ||
+          normalizedKey == 'status' ||
+          normalizedKey == 'estadoliberacion' ||
+          normalizedKey == 'liberacion' ||
+          normalizedKey == 'situacionjuridica' ||
+          normalizedKey.startsWith('estatus');
+      if (looksLikeStatusKey) {
+        final value = entry.value?.toString().trim();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+
+    return null;
+  }
+
+  String _normalizeStatusKey(String key) {
+    return key
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ñ', 'n')
+        .replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  String? _normalizeEstatusText(String? value) {
+    if (value == null) return null;
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+
+    final lower = raw.toLowerCase();
+    final compact = lower
+        .replaceAll('á', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    if (compact == '1' || compact == 'true' || compact == 'si' || compact == 'sí') {
+      return 'Liberado';
+    }
+    if (compact == '0' || compact == 'false' || compact == 'no') {
+      return 'No liberado';
+    }
+
+    if (compact.contains('no aplica') || compact.contains('sin dato') || compact.contains('n/a')) {
+      return 'Sin estatus';
+    }
+
+    if (compact.contains('no liberad') ||
+        compact.contains('no_liberad') ||
+        compact.contains('noliberad') ||
+        compact.contains('no autorizado') ||
+        compact.contains('no firmado') ||
+        compact.contains('pendiente') ||
+        compact.contains('en proceso')) {
+      return 'No liberado';
+    }
+
+    if (compact.contains('liberad') || compact.contains('firmado')) {
+      return 'Liberado';
+    }
+
+    if (compact.contains('sin estatus') || compact.contains('sin estado')) {
+      return 'Sin estatus';
+    }
+
+    // Si el campo existe pero no coincide con estados esperados, tratar como sin estatus.
+    return 'Sin estatus';
+  }
+
+  bool? _featureBoolValue(Map<String, dynamic> props, List<String> keys) {
+    final raw = _propValue(props, keys);
+    if (raw == null) return null;
+    final normalized = raw.trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1' || normalized == 'si' || normalized == 'sí' || normalized == 'yes' || normalized == 'y') {
+      return true;
+    }
+    if (normalized == 'false' || normalized == '0' || normalized == 'no' || normalized == 'n') {
+      return false;
+    }
+    return null;
+  }
+
+  LatLngBounds? _extractBoundsFromPosition(dynamic position) {
+    final dynamic p = position;
+    final dynamic rawBounds = p.visibleBounds ?? p.bounds;
+    if (rawBounds is LatLngBounds) return rawBounds;
+    return null;
+  }
+
+  String _viewportSyncKey(LatLngBounds bounds, int importedCount) {
+    String round6(double value) => value.toStringAsFixed(6);
+    return [
+      round6(bounds.west),
+      round6(bounds.south),
+      round6(bounds.east),
+      round6(bounds.north),
+      importedCount.toString(),
+    ].join('|');
+  }
+
+  void _scheduleViewportStatusSync({
+    required LatLngBounds? bounds,
+    required int importedCount,
+    bool immediate = false,
+  }) {
+    if (bounds == null || importedCount <= 0 || _isSyncingImportedStatuses) {
+      return;
+    }
+
+    final key = _viewportSyncKey(bounds, importedCount);
+    final now = DateTime.now();
+    if (_lastViewportStatusKey == key &&
+        _lastViewportStatusAt != null &&
+        now.difference(_lastViewportStatusAt!) < const Duration(seconds: 8)) {
+      return;
+    }
+
+    _viewportStatusDebounce?.cancel();
+    final wait = immediate ? Duration.zero : const Duration(milliseconds: 280);
+    _viewportStatusDebounce = Timer(wait, () {
+      _syncImportedStatusesViewport(bounds: bounds, importedCount: importedCount, syncKey: key);
+    });
+  }
+
+  void _syncImportedStatusesViewport({
+    required LatLngBounds bounds,
+    required int importedCount,
+    required String syncKey,
+  }) {
+    final proyecto = ref.read(proyectoActivoProvider);
+    final limit = (importedCount * 4).clamp(500, 20000).toInt();
+
+    _isSyncingImportedStatuses = true;
+    _apiClient
+        .getGestionEstatusViewport(
+          west: bounds.west,
+          south: bounds.south,
+          east: bounds.east,
+          north: bounds.north,
+          proyecto: proyecto,
+          limit: limit,
+        )
+        .then((items) {
+          if (!mounted) return;
+          final byPredioId = <String, Map<String, dynamic>>{};
+          final byClave = <String, Map<String, dynamic>>{};
+          for (final item in items) {
+            final predioId = (item['predio_id'] ?? '').toString().trim();
+            final clave = (item['clave_catastral'] ?? '').toString().trim().toUpperCase();
+            if (predioId.isNotEmpty) {
+              byPredioId[predioId] = item;
+            }
+            if (clave.isNotEmpty) {
+              byClave[clave] = item;
+            }
+          }
+          setState(() {
+            _estatusByPredioId
+              ..clear()
+              ..addAll(byPredioId);
+            _estatusByClave
+              ..clear()
+              ..addAll(byClave);
+            _lastViewportStatusKey = syncKey;
+            _lastViewportStatusAt = DateTime.now();
+          });
+        })
+        .catchError((_) {
+          // Fallback silencioso: se conserva el color local de las propiedades importadas.
+        })
+        .whenComplete(() {
+          _isSyncingImportedStatuses = false;
+        });
+  }
+
+  void _syncImportedStatusesBatch(List<Map<String, dynamic>> features) {
+    if (features.isEmpty) {
+      _lastImportedBatchSyncIdentity = identityHashCode(features);
+      return;
+    }
+
+    final identity = identityHashCode(features);
+    if (_lastImportedBatchSyncIdentity == identity || _isSyncingImportedStatuses) {
+      return;
+    }
+
+    final predioIds = <String>{};
+    final claves = <String>{};
+    for (final feature in features) {
+      final props = feature['properties'];
+      final propsMap = props is Map ? Map<String, dynamic>.from(props) : <String, dynamic>{};
+      final allProps = _flattenFeatureProps(feature, propsMap);
+      final (predioId, clave) = _extractFeaturePredioRef(allProps);
+      if (predioId != null && predioId.isNotEmpty) {
+        predioIds.add(predioId);
+      }
+      if (clave != null && clave.isNotEmpty) {
+        claves.add(clave);
+      }
+    }
+
+    if (predioIds.isEmpty && claves.isEmpty) {
+      _lastImportedBatchSyncIdentity = identity;
+      return;
+    }
+
+    _isSyncingImportedStatuses = true;
+    _apiClient
+        .getGestionEstatusBatch(
+          predioIds: predioIds.toList(growable: false),
+          clavesCatastrales: claves.toList(growable: false),
+        )
+        .then((items) {
+          if (!mounted) return;
+          final byPredioId = <String, Map<String, dynamic>>{};
+          final byClave = <String, Map<String, dynamic>>{};
+          for (final item in items) {
+            final predioId = (item['predio_id'] ?? '').toString().trim();
+            final clave = (item['clave_catastral'] ?? '').toString().trim().toUpperCase();
+            if (predioId.isNotEmpty) {
+              byPredioId[predioId] = item;
+            }
+            if (clave.isNotEmpty) {
+              byClave[clave] = item;
+            }
+          }
+          setState(() {
+            _estatusByPredioId
+              ..clear()
+              ..addAll(byPredioId);
+            _estatusByClave
+              ..clear()
+              ..addAll(byClave);
+            _lastImportedBatchSyncIdentity = identity;
+          });
+        })
+        .catchError((_) {
+          // Fallback silencioso: se mantiene color local por properties.
+        })
+        .whenComplete(() {
+          _isSyncingImportedStatuses = false;
+        });
+  }
+
+  (String?, String?) _extractFeaturePredioRef(Map<String, dynamic> allProps) {
+    final predioId =
+        (allProps['_predioId'] ?? allProps['predio_id'])?.toString().trim();
+    final clave = (allProps['clave_catastral_db'] ??
+            allProps['_claveCatastral'] ??
+            allProps['clave_catastral'] ??
+            allProps['CLAVE_CATASTRAL'] ??
+            allProps['clave'] ??
+            allProps['CLAVE'])
+        ?.toString()
+        .trim()
+        .toUpperCase();
+    return (predioId?.isEmpty == true ? null : predioId,
+        clave?.isEmpty == true ? null : clave);
+  }
+
+  String? _statusFromBackend(String? predioId, String? clave) {
+    if (predioId != null && predioId.isNotEmpty) {
+      final item = _estatusByPredioId[predioId];
+      final status = item?['estatus']?.toString().trim();
+      if (status != null && status.isNotEmpty) return status;
+    }
+    if (clave != null && clave.isNotEmpty) {
+      final item = _estatusByClave[clave];
+      final status = item?['estatus']?.toString().trim();
+      if (status != null && status.isNotEmpty) return status;
+    }
+    return null;
+  }
 }
 
 Color _estatusColor(String? estatus) {
-  switch (estatus) {
-    case 'Liberado':
-      return const Color(0xFF2E9E44); // green
-    case 'No liberado':
-      return const Color(0xFFD63A3A); // red
-    default:
-      return const Color(0xFF6D6D6D); // gray
+  final normalized = _normalizeStatusLabel(estatus);
+  if (normalized == 'Liberado') {
+    return AppColors.liberadoColor;
   }
+  if (normalized == 'No liberado') {
+    return AppColors.noLiberadoColor;
+  }
+  return const Color(0xFF6B7280);
 }
 
 class _PolylabelCell {
@@ -2823,20 +3627,136 @@ class _SavedPolygon {
   });
 }
 
+class _PredioGeometryCacheEntry {
+  final List<List<LatLng>> rings;
+  final LatLng? markerPoint;
+
+  const _PredioGeometryCacheEntry({
+    required this.rings,
+    required this.markerPoint,
+  });
+}
+
+class _ImportedGeometryCacheEntry {
+  final List<List<List<LatLng>>> polygons;
+
+  const _ImportedGeometryCacheEntry({required this.polygons});
+}
+
 class _PredioVisualData {
   final Predio predio;
   final Color color;
   final List<List<LatLng>> rings;
   final Polygon? polygon;
-  final LatLng? markerPoint;
 
   const _PredioVisualData({
     required this.predio,
     required this.color,
     required this.rings,
     required this.polygon,
-    required this.markerPoint,
   });
+}
+
+class _VisualLayerData {
+  final List<_PredioVisualData> visuals;
+  final LatLngBounds? bounds;
+
+  const _VisualLayerData({
+    required this.visuals,
+    required this.bounds,
+  });
+}
+
+class _ImportedLayerData {
+  final List<Polygon> polygons;
+  final List<Marker> markers;
+  final LatLngBounds? bounds;
+
+  const _ImportedLayerData({
+    required this.polygons,
+    required this.markers,
+    required this.bounds,
+  });
+}
+
+List<Map<String, dynamic>> _preparePredioGeometryWarmup(
+  List<Map<String, dynamic>> payload,
+) {
+  final output = <Map<String, dynamic>>[];
+  for (final row in payload) {
+    final key = row['key']?.toString();
+    final geometry = row['geometry'];
+    if (key == null) continue;
+
+    final rings = _warmupExtractFirstPolygonRings(geometry);
+    output.add(<String, dynamic>{
+      'key': key,
+      'rings': rings,
+    });
+  }
+  return output;
+}
+
+List<List<List<double>>> _warmupExtractFirstPolygonRings(dynamic geometryRaw) {
+  Map<String, dynamic>? geometry;
+  if (geometryRaw is Map<String, dynamic>) {
+    geometry = geometryRaw;
+  } else if (geometryRaw is Map) {
+    try {
+      geometry = Map<String, dynamic>.from(geometryRaw);
+    } catch (_) {
+      geometry = null;
+    }
+  }
+  if (geometry == null) return const [];
+
+  final type = geometry['type'] as String?;
+  final coords = geometry['coordinates'];
+  if (type == null || coords is! List || coords.isEmpty) return const [];
+
+  List<List<dynamic>>? targetRings;
+  if (type == 'Polygon') {
+    targetRings = coords.whereType<List<dynamic>>().toList(growable: false);
+  } else if (type == 'MultiPolygon') {
+    final first = coords.first;
+    if (first is List) {
+      targetRings = first.whereType<List<dynamic>>().toList(growable: false);
+    }
+  }
+
+  if (targetRings == null || targetRings.isEmpty) return const [];
+
+  final rings = <List<List<double>>>[];
+  for (final ringRaw in targetRings) {
+    final ring = <List<double>>[];
+    for (final pointRaw in ringRaw.whereType<List>()) {
+      if (pointRaw.length < 2) continue;
+      final x = _warmupToDouble(pointRaw[0]);
+      final y = _warmupToDouble(pointRaw[1]);
+      if (x == null || y == null) continue;
+
+      // Preferimos [lng,lat], con fallback a [lat,lng].
+      if (_warmupValidLatLng(y, x)) {
+        ring.add([y, x]);
+      } else if (_warmupValidLatLng(x, y)) {
+        ring.add([x, y]);
+      }
+    }
+    if (ring.length >= 3) {
+      rings.add(ring);
+    }
+  }
+  return rings;
+}
+
+double? _warmupToDouble(dynamic value) {
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value.trim());
+  return null;
+}
+
+bool _warmupValidLatLng(double lat, double lng) {
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 

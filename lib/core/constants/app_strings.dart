@@ -1,7 +1,7 @@
 class AppStrings {
   AppStrings._();
 
-  static const String appName = 'Geoportal Predios';
+  static const String appName = 'GEOPORTAL DE GESTION';
   static const String appSubtitle = 'Gestión Catastral';
 
   // Auth

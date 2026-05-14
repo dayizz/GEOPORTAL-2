@@ -33,6 +33,63 @@ class Proyecto {
     this.updatedAt,
   });
 
+  static bool _asBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' ||
+          normalized == '1' ||
+          normalized == 'si' ||
+          normalized == 'sí' ||
+          normalized == 'yes';
+    }
+    return false;
+  }
+
+  static String _normalizeEstatus(Map<String, dynamic> map) {
+    final raw = (map['estatus_predio'] ??
+            map['estatus'] ??
+            map['_estatusPredio'] ??
+            map['_estatusColorKey'])
+        ?.toString()
+        .trim();
+
+    if (raw != null && raw.isNotEmpty) {
+      final normalized = raw
+          .toLowerCase()
+          .replaceAll('á', 'a')
+          .replaceAll('é', 'e')
+          .replaceAll('í', 'i')
+          .replaceAll('ó', 'o')
+          .replaceAll('ú', 'u');
+      if (normalized.contains('no liberad') ||
+          normalized == '0' ||
+          normalized == 'false' ||
+          normalized == 'no') {
+        return 'No liberado';
+      }
+      if (normalized.contains('liberad') ||
+          normalized == '1' ||
+          normalized == 'true' ||
+          normalized == 'si' ||
+          normalized == 'sí') {
+        return 'Liberado';
+      }
+    }
+
+    final cop = _asBool(map['cop']);
+    final identificacion = _asBool(map['identificacion']);
+    final levantamiento = _asBool(map['levantamiento']);
+    final negociacion = _asBool(map['negociacion']);
+
+    if (cop) return 'Liberado';
+    if (identificacion || levantamiento || negociacion) {
+      return 'No liberado';
+    }
+    return 'Sin estatus';
+  }
+
   factory Proyecto.fromMap(Map<String, dynamic> map) {
     // Normalizar geometría: puede venir como string JSON o como Map
     Map<String, dynamic>? geometry;
@@ -56,7 +113,7 @@ class Proyecto {
       tipoPropiedad: map['tipo_propiedad'] as String? ?? 'Sin tipo',
       estado: map['estado'] as String?,
       municipio: map['municipio'] as String?,
-      estatusPredio: map['estatus_predio'] as String?,
+      estatusPredio: _normalizeEstatus(map),
       kmInicio: (map['km_inicio'] as num?)?.toDouble(),
       kmFin: (map['km_fin'] as num?)?.toDouble(),
       superficie: (map['superficie'] as num?)?.toDouble() ?? 0.0,

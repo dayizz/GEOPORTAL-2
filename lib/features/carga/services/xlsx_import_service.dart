@@ -71,6 +71,11 @@ class XlsxImportService {
   static const int _batchSize = 40;
   final ImportacionRepository? _importacionRepository;
 
+  static final Map<String, List<String>> _prediosAliasesNormalized =
+      _normalizeAliases(_prediosAliases);
+  static final Map<String, List<String>> _propietariosAliasesNormalized =
+      _normalizeAliases(_propietariosAliases);
+
   XlsxImportService([this._importacionRepository]);
 
   Future<XlsxParseResult> parseInBackground(Uint8List bytes) async {
@@ -261,26 +266,15 @@ class XlsxImportService {
 
       final headers = headerInfo.headers;
       final target = headerInfo.tabla;
+      final headerIndexByName = _buildHeaderIndexMap(headers);
 
       final proyectoDeHoja = _inferirProyectoDeHoja(hoja);
 
       final rows = <Map<String, dynamic>>[];
       for (final row in table.rows.skip(headerInfo.headerRowIndex + 1)) {
-        final rowMap = <String, String>{};
-        for (var i = 0; i < headers.length; i++) {
-          if (i >= row.length) continue;
-          final key = headers[i];
-          if (key.isEmpty) continue;
-          final val = _cellToText(row[i]).trim();
-          if (val.isNotEmpty) {
-            rowMap[key] = val;
-          }
-        }
-        if (rowMap.isEmpty) continue;
-
         var normalizedRow = target == XlsxTargetTable.predios
-            ? _normalizarFilaPredio(rowMap)
-            : _normalizarFilaPropietario(rowMap);
+            ? _normalizarFilaPredio(row, headerIndexByName)
+            : _normalizarFilaPropietario(row, headerIndexByName);
         if (normalizedRow.isEmpty) continue;
 
         // Inyectar proyecto inferido del nombre de hoja si la fila no lo tiene
@@ -330,8 +324,8 @@ class XlsxImportService {
       final hasAtLeastOneHeader = headers.any((h) => h.isNotEmpty);
       if (!hasAtLeastOneHeader) continue;
 
-      final prediosScore = _score(headers, _prediosAliases);
-      final propietariosScore = _score(headers, _propietariosAliases);
+      final prediosScore = _score(headers, _prediosAliasesNormalized);
+      final propietariosScore = _score(headers, _propietariosAliasesNormalized);
       final totalScore = prediosScore > propietariosScore ? prediosScore : propietariosScore;
       if (totalScore == 0) continue;
 
@@ -471,13 +465,28 @@ class XlsxImportService {
     return score;
   }
 
-  Map<String, dynamic> _normalizarFilaPredio(Map<String, String> row) {
+  Map<String, int> _buildHeaderIndexMap(List<String> headers) {
+    final indexByName = <String, int>{};
+    for (var i = 0; i < headers.length; i++) {
+      final header = headers[i];
+      if (header.isEmpty) continue;
+      indexByName.putIfAbsent(header, () => i);
+    }
+    return indexByName;
+  }
+
+  Map<String, dynamic> _normalizarFilaPredio(
+    List<dynamic> row,
+    Map<String, int> headerIndexByName,
+  ) {
     final out = <String, dynamic>{};
 
     String? pick(List<String> aliases) {
       for (final a in aliases) {
-        final value = row[_normalize(a)]?.trim();
-        if (value != null && value.isNotEmpty) {
+        final index = headerIndexByName[a];
+        if (index == null || index >= row.length) continue;
+        final value = _cellToText(row[index]).trim();
+        if (value.isNotEmpty) {
           return value;
         }
       }
@@ -503,89 +512,94 @@ class XlsxImportService {
       return null;
     }
 
-    final clave = pick(_prediosAliases['clave_catastral']!);
+    final clave = pick(_prediosAliasesNormalized['clave_catastral']!);
     if (clave != null) out['clave_catastral'] = _normalizeUpperCode(clave);
 
-    final tramo = pick(_prediosAliases['tramo']!);
+    final tramo = pick(_prediosAliasesNormalized['tramo']!);
     if (tramo != null) out['tramo'] = _normalizeUpperCode(tramo);
 
-    final tipo = pick(_prediosAliases['tipo_propiedad']!);
+    final tipo = pick(_prediosAliasesNormalized['tipo_propiedad']!);
     if (tipo != null) out['tipo_propiedad'] = _normalizeTipoPropiedadValue(tipo);
 
-    final ejido = pick(_prediosAliases['ejido']!);
+    final ejido = pick(_prediosAliasesNormalized['ejido']!);
     if (ejido != null) out['ejido'] = _normalizePlainText(ejido);
 
-    final proyecto = pick(_prediosAliases['proyecto']!);
+    final proyecto = pick(_prediosAliasesNormalized['proyecto']!);
     if (proyecto != null) out['proyecto'] = _normalizeProyectoValue(proyecto);
 
-    final propietarioNombre = pick(_prediosAliases['propietario_nombre']!);
+    final propietarioNombre = pick(_prediosAliasesNormalized['propietario_nombre']!);
     if (propietarioNombre != null) out['propietario_nombre'] = _normalizePlainText(propietarioNombre);
 
-    final kmInicio = pickDouble(_prediosAliases['km_inicio']!);
+    final kmInicio = pickDouble(_prediosAliasesNormalized['km_inicio']!);
     if (kmInicio != null) out['km_inicio'] = kmInicio;
 
-    final kmFin = pickDouble(_prediosAliases['km_fin']!);
+    final kmFin = pickDouble(_prediosAliasesNormalized['km_fin']!);
     if (kmFin != null) out['km_fin'] = kmFin;
 
-    final kmLineales = pickDouble(_prediosAliases['km_lineales']!);
+    final kmLineales = pickDouble(_prediosAliasesNormalized['km_lineales']!);
     if (kmLineales != null) out['km_lineales'] = kmLineales;
 
-    final kmEfectivos = pickDouble(_prediosAliases['km_efectivos']!);
+    final kmEfectivos = pickDouble(_prediosAliasesNormalized['km_efectivos']!);
     if (kmEfectivos != null) out['km_efectivos'] = kmEfectivos;
 
-    final superficie = pickDouble(_prediosAliases['superficie']!);
+    final superficie = pickDouble(_prediosAliasesNormalized['superficie']!);
     if (superficie != null) out['superficie'] = superficie;
 
-    final lat = pickDouble(_prediosAliases['latitud']!);
+    final lat = pickDouble(_prediosAliasesNormalized['latitud']!);
     if (lat != null) out['latitud'] = lat;
 
-    final lng = pickDouble(_prediosAliases['longitud']!);
+    final lng = pickDouble(_prediosAliasesNormalized['longitud']!);
     if (lng != null) out['longitud'] = lng;
 
-    final cop = pickBool(_prediosAliases['cop']!);
+    final cop = pickBool(_prediosAliasesNormalized['cop']!);
     if (cop != null) out['cop'] = cop;
 
-    final identificacion = pickBool(_prediosAliases['identificacion']!);
+    final identificacion = pickBool(_prediosAliasesNormalized['identificacion']!);
     if (identificacion != null) out['identificacion'] = identificacion;
 
-    final levantamiento = pickBool(_prediosAliases['levantamiento']!);
+    final levantamiento = pickBool(_prediosAliasesNormalized['levantamiento']!);
     if (levantamiento != null) out['levantamiento'] = levantamiento;
 
-    final negociacion = pickBool(_prediosAliases['negociacion']!);
+    final negociacion = pickBool(_prediosAliasesNormalized['negociacion']!);
     if (negociacion != null) out['negociacion'] = negociacion;
 
-    final poligonoInsertado = pickBool(_prediosAliases['poligono_insertado']!);
+    final poligonoInsertado = pickBool(_prediosAliasesNormalized['poligono_insertado']!);
     if (poligonoInsertado != null) out['poligono_insertado'] = poligonoInsertado;
 
-    final rfcProp = pick(_prediosAliases['rfc_propietario']!);
+    final rfcProp = pick(_prediosAliasesNormalized['rfc_propietario']!);
     if (rfcProp != null) out['rfc_propietario'] = _normalizeUpperCode(rfcProp);
 
-    final curpProp = pick(_prediosAliases['curp_propietario']!);
+    final curpProp = pick(_prediosAliasesNormalized['curp_propietario']!);
     if (curpProp != null) out['curp_propietario'] = _normalizeUpperCode(curpProp);
 
-    final telProp = pick(_prediosAliases['telefono_propietario']!);
+    final telProp = pick(_prediosAliasesNormalized['telefono_propietario']!);
     if (telProp != null) out['telefono_propietario'] = _normalizePlainText(telProp);
 
-    final correoProp = pick(_prediosAliases['correo_propietario']!);
+    final correoProp = pick(_prediosAliasesNormalized['correo_propietario']!);
     if (correoProp != null) out['correo_propietario'] = _normalizeEmail(correoProp);
 
     return out;
   }
 
-  Map<String, dynamic> _normalizarFilaPropietario(Map<String, String> row) {
+  Map<String, dynamic> _normalizarFilaPropietario(
+    List<dynamic> row,
+    Map<String, int> headerIndexByName,
+  ) {
     final out = <String, dynamic>{};
 
     String? pick(List<String> aliases) {
       for (final a in aliases) {
-        final value = row[_normalize(a)]?.trim();
-        if (value != null && value.isNotEmpty) {
+        final index = headerIndexByName[a];
+        if (index == null || index >= row.length) continue;
+        final value = _cellToText(row[index]).trim();
+        if (value.isNotEmpty) {
           return value;
         }
       }
       return null;
     }
 
-    for (final entry in _propietariosAliases.entries) {
+    for (final entry in _propietariosAliasesNormalized.entries) {
       final value = pick(entry.value);
       if (value != null) {
         out[entry.key] = _normalizePropietarioField(entry.key, value);
@@ -670,7 +684,18 @@ class XlsxImportService {
     }
   }
 
-  String _normalize(String value) {
+  static Map<String, List<String>> _normalizeAliases(
+    Map<String, List<String>> aliases,
+  ) {
+    return aliases.map(
+      (key, values) => MapEntry(
+        key,
+        values.map(_normalize).toList(growable: false),
+      ),
+    );
+  }
+
+  static String _normalize(String value) {
     var s = value.toLowerCase().trim();
     const replacements = {
       'á': 'a',

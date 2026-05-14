@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import '../../core/config/backend_config.dart';
+
 class BackendService {
-  static const String _baseUrl = 'http://127.0.0.1:8000';
+  static String get _baseUrl => BackendConfig.baseUrl;
 
   static Future<int?> procesarValor(int valor) async {
     final url = Uri.parse('$_baseUrl/procesar');

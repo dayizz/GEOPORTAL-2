@@ -14,7 +14,7 @@ class GeoportalApp extends ConsumerWidget {
     return ScrollConfiguration(
       behavior: _DesktopScrollBehavior(),
       child: MaterialApp.router(
-        title: 'Geoportal Predios',
+        title: 'Geoportal de Gestion',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         routerConfig: router,

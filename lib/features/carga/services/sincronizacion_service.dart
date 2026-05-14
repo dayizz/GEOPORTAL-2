@@ -61,6 +61,25 @@ class _FeatureSyncOutcome {
 }
 
 /// Motor de sincronización GeoJSON ↔ Base de datos.
+/// Datos de un predio nuevo que aún no se ha enviado al backend.
+/// Se recopilan durante la fase de lookup para después hacer un batch create.
+class _PendingCreate {
+  final int featureIndex;
+  final Map<String, dynamic> feature;
+  final Map<String, dynamic> props;
+  final Map<String, dynamic>? geometry;
+  final Map<String, dynamic> predioData;
+
+  _PendingCreate({
+    required this.featureIndex,
+    required this.feature,
+    required this.props,
+    this.geometry,
+    required this.predioData,
+  });
+}
+
+/// Motor de sincronización GeoJSON ↔ Base de datos.
 ///
 /// Para cada feature:
 /// 1. Extrae el identificador único del campo `clave_catastral` (o aliases).
@@ -105,6 +124,28 @@ class SincronizacionService {
     return null;
   }
 
+  Map<String, dynamic> _preparedGeoJsonProps(Map<String, dynamic> feature) {
+    final rawProps = feature['properties'];
+    final propsOriginal = rawProps is Map
+        ? Map<String, dynamic>.from(rawProps)
+        : <String, dynamic>{};
+    // Algunos GeoJSON/exports colocan atributos en el nivel raíz del feature
+    // (fuera de "properties"). Mezclarlos para no perder estatus/clave/proyecto.
+    final propsWithTopLevel = <String, dynamic>{...propsOriginal};
+    for (final entry in feature.entries) {
+      final key = entry.key;
+      if (key == 'type' || key == 'geometry' || key == 'properties') {
+        continue;
+      }
+      propsWithTopLevel.putIfAbsent(key, () => entry.value);
+    }
+    final normalized = GeoJsonMapper.normalizeProperties(propsWithTopLevel);
+    return {
+      ...propsWithTopLevel,
+      ...normalized,
+    };
+  }
+
   /// Combina properties del feature con datos del sistema.
   Map<String, dynamic> _injectData(
     Map<String, dynamic> props,
@@ -112,6 +153,23 @@ class SincronizacionService {
   ) {
     final enriched = Map<String, dynamic>.from(props);
     final syncAt = DateTime.now().toIso8601String();
+    final cop = _toBoolNullable(predioMap['cop']) ?? false;
+    final identificacion = _toBoolNullable(predioMap['identificacion']) ?? false;
+    final levantamiento = _toBoolNullable(predioMap['levantamiento']) ?? false;
+    final negociacion = _toBoolNullable(predioMap['negociacion']) ?? false;
+    final estatusGeoJson = _normalizeStatusLabel(props);
+    final estatusBackend = _normalizeStatusLabel({
+          'cop': cop,
+          'identificacion': identificacion,
+          'levantamiento': levantamiento,
+          'negociacion': negociacion,
+        }) ??
+        (cop
+            ? 'Liberado'
+            : (identificacion || levantamiento || negociacion)
+                ? 'No liberado'
+                : 'Sin estatus');
+        final estatus = estatusGeoJson ?? estatusBackend;
 
     // Datos de gestión
     enriched['_predioId'] = predioMap['id'];
@@ -120,16 +178,24 @@ class SincronizacionService {
     enriched['clave_catastral_db'] = predioMap['clave_catastral'];
     enriched['_tramo'] = predioMap['tramo'];
     enriched['_tipoPropiedad'] = predioMap['tipo_propiedad'];
-    enriched['_cop'] = predioMap['cop'];
+    enriched['_cop'] = cop;
+    enriched['cop'] = cop;
     enriched['_superficie'] = predioMap['superficie'];
-    enriched['_identificacion'] = predioMap['identificacion'];
-    enriched['_levantamiento'] = predioMap['levantamiento'];
-    enriched['_negociacion'] = predioMap['negociacion'];
+    enriched['_identificacion'] = identificacion;
+    enriched['identificacion'] = identificacion;
+    enriched['_levantamiento'] = levantamiento;
+    enriched['levantamiento'] = levantamiento;
+    enriched['_negociacion'] = negociacion;
+    enriched['negociacion'] = negociacion;
     enriched['_poligonoInsertado'] = predioMap['poligono_insertado'];
     enriched['_ejido'] = predioMap['ejido'];
     enriched['_kmInicio'] = predioMap['km_inicio'];
     enriched['_kmFin'] = predioMap['km_fin'];
     enriched['_proyecto'] = predioMap['proyecto'];
+    enriched['_estatusPredio'] = estatus;
+    enriched['estatus_predio'] = estatus;
+    enriched['estatus'] = estatus;
+    enriched['_estatusColorKey'] = estatus;
     enriched['_sincronizado'] = true;
     enriched['_syncStatus'] = 'linked';
     enriched['_syncSource'] = 'geojson_import';
@@ -245,6 +311,48 @@ class SincronizacionService {
     return s.replaceAll(RegExp(r'[^a-z0-9]'), '');
   }
 
+  bool? _toBoolNullable(dynamic v) {
+    if (v == null) return null;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    if (v is String) {
+      final normalized = v.trim().toLowerCase();
+      if (normalized.isEmpty || normalized == 'null') return null;
+      if ({'true', '1', 'si', 'sí', 'yes', 'y'}.contains(normalized)) {
+        return true;
+      }
+      if ({'false', '0', 'no', 'n'}.contains(normalized)) return false;
+    }
+    return null;
+  }
+
+  bool? _pickBool(Map<String, dynamic> props, List<String> keys) {
+    for (final k in keys) {
+      if (!props.containsKey(k)) continue;
+      final parsed = _toBoolNullable(props[k]);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  String? _normalizeStatusLabel(Map<String, dynamic> props) {
+    final raw = _pick(props, [
+      'estatus_predio',
+      'estatus',
+      'estado_predio',
+      'situacion',
+      'ESTATUS_PREDIO',
+      'ESTATUS',
+      'ESTADO_PREDIO',
+      'SITUACION',
+    ]);
+    if (raw == null) return null;
+    final normalized = raw.trim().toLowerCase();
+    if (normalized.contains('no liberado')) return 'No liberado';
+    if (normalized.contains('liberado')) return 'Liberado';
+    return null;
+  }
+
   Future<T> _withRetry<T>(
     Future<T> Function() operation, {
     required String operationName,
@@ -328,6 +436,25 @@ class SincronizacionService {
       ) ??
       0;
 
+    final statusLabel = _normalizeStatusLabel(props);
+    final copBool = _pickBool(props, ['cop', 'COP']) ??
+        (statusLabel == 'Liberado'
+            ? true
+            : statusLabel == 'No liberado'
+                ? false
+                : null);
+    final identificacionBool = _pickBool(props, ['identificacion', 'IDENTIFICACION']);
+    final levantamientoBool = _pickBool(props, ['levantamiento', 'LEVANTAMIENTO']);
+    var negociacionBool = _pickBool(props, ['negociacion', 'NEGOCIACION']);
+    if ((copBool ?? false) == false &&
+        statusLabel == 'No liberado' &&
+        identificacionBool == null &&
+        levantamientoBool == null &&
+        negociacionBool == null) {
+      // Si el archivo solo marca estatus "No liberado", conservarlo en una bandera.
+      negociacionBool = true;
+    }
+
     final data = <String, dynamic>{
       // ── Identificación ──────────────────────────────────────────────────
       'clave_catastral': claveCatastral,
@@ -387,10 +514,10 @@ class SincronizacionService {
       'poligono_insertado': geometry != null,
 
       // ── Gestión (estado inicial) ─────────────────────────────────────────
-      'cop': props['cop'] as bool? ?? false,
-      'identificacion': props['identificacion'] as bool? ?? false,
-      'levantamiento': props['levantamiento'] as bool? ?? false,
-      'negociacion': props['negociacion'] as bool? ?? false,
+      'cop': copBool ?? false,
+      'identificacion': identificacionBool ?? false,
+      'levantamiento': levantamientoBool ?? false,
+      'negociacion': negociacionBool ?? false,
     };
 
     // Eliminar claves con valor null para no pisar datos existentes
@@ -486,6 +613,34 @@ class SincronizacionService {
     trySet('km_lineales',   _toDouble(props['km_lineales']   ?? props['KM_LINEALES']   ?? props['longitud_km'] ?? props['longitud']));
     trySet('km_efectivos',  _toDouble(props['km_efectivos']  ?? props['KM_EFECTIVOS']));
 
+    // Estado de liberación: si el GeoJSON trae valor explícito, sobrescribir.
+    final statusLabel = _normalizeStatusLabel(props);
+    final ident = _pickBool(props, ['identificacion', 'IDENTIFICACION']);
+    final lev = _pickBool(props, ['levantamiento', 'LEVANTAMIENTO']);
+    var neg = _pickBool(props, ['negociacion', 'NEGOCIACION']);
+    final cop = _pickBool(props, ['cop', 'COP']) ??
+        (statusLabel == 'Liberado'
+            ? true
+            : statusLabel == 'No liberado'
+                ? false
+                : null);
+
+    if (cop != null) {
+      updates['cop'] = cop;
+    }
+    if (ident != null) updates['identificacion'] = ident;
+    if (lev != null) updates['levantamiento'] = lev;
+    if (neg != null) updates['negociacion'] = neg;
+
+    if ((cop ?? false) == false &&
+        statusLabel == 'No liberado' &&
+        ident == null &&
+        lev == null &&
+        neg == null) {
+      // Mantener "No liberado" aun cuando no se especifiquen banderas individuales.
+      updates['negociacion'] = true;
+    }
+
     if (geometry != null && existente['geometry'] == null) {
       updates['geometry']           = geometry;
       updates['poligono_insertado'] = true;
@@ -496,10 +651,17 @@ class SincronizacionService {
   /// Procesa todos los features del archivo GeoJSON de forma asíncrona.
   ///
   /// [features]: Lista de features crudos del GeoJSON.
+  ///
+  /// Diseño de 2 fases:
+  ///   Fase 1 (concurrente): busca predios existentes y actualiza metadatos.
+  ///                         Los features nuevos se acumulan en [pendingCreates].
+  ///   Fase 2 (batch único): envía todos los predios nuevos en una sola llamada
+  ///                         atómica, evitando condiciones de carrera en el backend.
   Future<SincronizacionResultado> sincronizar(
     List<Map<String, dynamic>> features, {
     int concurrency = _defaultSyncConcurrency,
     void Function(int procesados, int total)? onProgress,
+    String? archivoId,
   }) async {
     if (features.isEmpty) {
       return const SincronizacionResultado(
@@ -513,46 +675,116 @@ class SincronizacionService {
     final resultadosByIndex = <int, FeatureSyncResult>{};
     final mensajesError = <String>[];
     final predioByClaveCache = <String, Map<String, dynamic>?>{};
+    final pendingCreates = <_PendingCreate>[];
     var encontrados = 0;
-    var creados = 0;
     var errores = 0;
     var procesados = 0;
 
     onProgress?.call(0, features.length);
 
+    // ── Fase 1: lookup/update concurrente ────────────────────────────────────
     final lanes = _buildLanes(features, concurrency);
     await Future.wait(
       lanes.map(
-        (lane) => _processLane(
+        (lane) => _processLaneLookup(
           lane,
           predioByClaveCache: predioByClaveCache,
+          archivoId: archivoId,
+          pendingCreates: pendingCreates,
           onOutcome: (outcome) {
             resultadosByIndex[outcome.featureIndex] = outcome.result;
             encontrados += outcome.encontrados;
-            creados += outcome.creados;
             errores += outcome.errores;
             procesados += 1;
             onProgress?.call(procesados, features.length);
-
             for (final msg in outcome.mensajesError) {
-              if (mensajesError.length >= 5) {
-                break;
-              }
-              mensajesError.add(msg);
+              if (mensajesError.length < 5) mensajesError.add(msg);
             }
           },
         ),
       ),
     );
 
+    // ── Fase 2: propietarios + batch create ──────────────────────────────────
+    var creados = 0;
+    if (pendingCreates.isNotEmpty) {
+      // 2a. Crear propietarios secuencialmente (evita duplicados).
+      for (final pending in pendingCreates) {
+        final nombreProp = pending.predioData['propietario_nombre'] as String?;
+        if (nombreProp != null && nombreProp.isNotEmpty) {
+          try {
+            final propietario = await _withRetry(
+              () => _propietariosRepo.findOrCreateFromData(
+                _buildPropietarioData(pending.props),
+              ),
+              operationName: 'findOrCreatePropietario',
+            );
+            pending.predioData['propietario_id'] = propietario.id;
+          } catch (_) {}
+        }
+      }
+
+      // 2b. Enviar todos los predios nuevos en un único batch atómico.
+      final batchData = pendingCreates.map((p) => p.predioData).toList();
+      try {
+        final created = await _withRetry(
+          () => _prediosRepo.createPrediosBatch(batchData),
+          operationName: 'createPrediosBatch',
+        );
+        for (var i = 0; i < created.length; i++) {
+          final pending = pendingCreates[i];
+          final nuevoMap = created[i].toMap()..['id'] = created[i].id;
+          predioByClaveCache[pending.predioData['clave_catastral'] as String] = nuevoMap;
+          final enrichedProps = _injectData(pending.props, nuevoMap);
+          enrichedProps['_predioNuevo'] = true;
+          resultadosByIndex[pending.featureIndex] = FeatureSyncResult(
+            feature: {...pending.feature, 'properties': enrichedProps},
+            existia: false,
+            predioId: created[i].id,
+          );
+          creados++;
+        }
+      } catch (_) {
+        // Fallback: crear individualmente si el batch falla.
+        for (final pending in pendingCreates) {
+          final featureNumber = pending.featureIndex + 1;
+          try {
+            final predio = await _withRetry(
+              () => _prediosRepo.createPredio(pending.predioData),
+              operationName: 'createPredio',
+            );
+            final nuevoMap = predio.toMap()..['id'] = predio.id;
+            final enrichedProps = _injectData(pending.props, nuevoMap);
+            enrichedProps['_predioNuevo'] = true;
+            resultadosByIndex[pending.featureIndex] = FeatureSyncResult(
+              feature: {...pending.feature, 'properties': enrichedProps},
+              existia: false,
+              predioId: predio.id,
+            );
+            creados++;
+          } catch (e2) {
+            errores++;
+            if (mensajesError.length < 5) {
+              mensajesError.add('Feature $featureNumber: ${e2.toString()}');
+            }
+            final propsErr = Map<String, dynamic>.from(pending.props)
+              ..['_syncStatus'] = 'error'
+              ..['_syncError'] = e2.toString();
+            resultadosByIndex[pending.featureIndex] = FeatureSyncResult(
+              feature: {...pending.feature, 'properties': propsErr},
+              existia: false,
+            );
+          }
+        }
+      }
+    }
+
     onProgress?.call(features.length, features.length);
 
     final resultados = <FeatureSyncResult>[];
     for (var i = 0; i < features.length; i++) {
       final item = resultadosByIndex[i];
-      if (item != null) {
-        resultados.add(item);
-      }
+      if (item != null) resultados.add(item);
     }
 
     return SincronizacionResultado(
@@ -592,11 +824,7 @@ class SincronizacionService {
     int fallbackIndex,
     int laneCount,
   ) {
-    final rawProps = feature['properties'];
-    final propsOriginal = rawProps is Map
-        ? Map<String, dynamic>.from(rawProps)
-        : <String, dynamic>{};
-    final props = GeoJsonMapper.normalizeProperties(propsOriginal);
+    final props = _preparedGeoJsonProps(feature);
     final clave = _extractId(props)?.trim();
 
     if (clave != null && clave.isNotEmpty) {
@@ -610,14 +838,138 @@ class SincronizacionService {
     List<MapEntry<int, Map<String, dynamic>>> lane, {
     required Map<String, Map<String, dynamic>?> predioByClaveCache,
     required void Function(_FeatureSyncOutcome outcome) onOutcome,
+    String? archivoId,
   }) async {
     for (final item in lane) {
       final outcome = await _processFeature(
         item.key,
         item.value,
         predioByClaveCache: predioByClaveCache,
+        archivoId: archivoId,
       );
       onOutcome(outcome);
+    }
+  }
+
+  /// Versión lookup-only de _processLane: procesa predios existentes y acumula
+  /// los nuevos en [pendingCreates] sin llamar al backend para crearlos.
+  Future<void> _processLaneLookup(
+    List<MapEntry<int, Map<String, dynamic>>> lane, {
+    required Map<String, Map<String, dynamic>?> predioByClaveCache,
+    required List<_PendingCreate> pendingCreates,
+    required void Function(_FeatureSyncOutcome outcome) onOutcome,
+    String? archivoId,
+  }) async {
+    for (final item in lane) {
+      final result = await _processFeatureLookup(
+        item.key,
+        item.value,
+        predioByClaveCache: predioByClaveCache,
+        pendingCreates: pendingCreates,
+        archivoId: archivoId,
+      );
+      if (result != null) onOutcome(result);
+    }
+  }
+
+  /// Fase lookup de un único feature.
+  /// - Si el predio ya existe → actualiza y devuelve outcome completo.
+  /// - Si es nuevo → añade a [pendingCreates] y devuelve null (se procesa en batch).
+  Future<_FeatureSyncOutcome?> _processFeatureLookup(
+    int featureIndex,
+    Map<String, dynamic> feature, {
+    required Map<String, Map<String, dynamic>?> predioByClaveCache,
+    required List<_PendingCreate> pendingCreates,
+    String? archivoId,
+  }) async {
+    final featureNumber = featureIndex + 1;
+    try {
+        final props = _preparedGeoJsonProps(feature);
+      final geometry = feature['geometry'] is Map
+          ? Map<String, dynamic>.from(feature['geometry'] as Map)
+          : null;
+      final clave = _extractId(props);
+
+      if (clave != null) {
+        final claveNormalizada = clave.trim();
+        Map<String, dynamic>? existente;
+
+        if (predioByClaveCache.containsKey(claveNormalizada)) {
+          existente = predioByClaveCache[claveNormalizada];
+        } else {
+          existente = await _withRetry(
+            () => _prediosRepo.buscarPorClaveCatastral(claveNormalizada),
+            operationName: 'buscarPorClaveCatastral',
+          );
+          predioByClaveCache[claveNormalizada] = existente;
+        }
+
+        if (existente != null) {
+          var existenteActual = existente;
+          final updateData = _buildGestionUpdateData(props, geometry, existenteActual);
+          if (updateData.isNotEmpty) {
+            try {
+              final updated = await _withRetry(
+                () => _prediosRepo.updatePredio(
+                  existenteActual['id'] as String,
+                  updateData,
+                ),
+                operationName: 'updatePredio',
+              );
+              final propietariosRaw = existenteActual['propietarios'];
+              existenteActual = updated.toMap()
+                ..['id'] = updated.id
+                ..['propietarios'] = propietariosRaw;
+              predioByClaveCache[claveNormalizada] = existenteActual;
+            } catch (_) {}
+          }
+          final enrichedProps = _injectData(props, existenteActual);
+          return _FeatureSyncOutcome(
+            featureIndex: featureIndex,
+            result: FeatureSyncResult(
+              feature: {...feature, 'properties': enrichedProps},
+              existia: true,
+              predioId: existenteActual['id'] as String?,
+            ),
+            encontrados: 1,
+            creados: 0,
+            errores: 0,
+          );
+        }
+      }
+
+      // Predio nuevo: acumular para batch create, no llamar al API aquí.
+      final nuevaClave =
+          clave ?? 'IMP-${DateTime.now().microsecondsSinceEpoch}-$featureNumber';
+      final predioData = _buildNuevoPredioData(nuevaClave, props, geometry);
+      if (archivoId != null) predioData['archivo_id'] = archivoId;
+
+      pendingCreates.add(_PendingCreate(
+        featureIndex: featureIndex,
+        feature: feature,
+        props: props,
+        geometry: geometry,
+        predioData: predioData,
+      ));
+      return null; // Se procesará en la fase 2 (batch).
+    } catch (e) {
+      // En caso de error de lookup, marcar como error.
+      final propsErr = _preparedGeoJsonProps(feature)
+        ..['_syncStatus'] = 'error'
+        ..['_syncError'] = e.toString()
+        ..['_syncSource'] = 'geojson_import'
+        ..['_syncAt'] = DateTime.now().toIso8601String();
+      return _FeatureSyncOutcome(
+        featureIndex: featureIndex,
+        result: FeatureSyncResult(
+          feature: {...feature, 'properties': propsErr},
+          existia: false,
+        ),
+        encontrados: 0,
+        creados: 0,
+        errores: 1,
+        mensajesError: ['Feature $featureNumber lookup: ${e.toString()}'],
+      );
     }
   }
 
@@ -625,15 +977,12 @@ class SincronizacionService {
     int featureIndex,
     Map<String, dynamic> feature, {
     required Map<String, Map<String, dynamic>?> predioByClaveCache,
+      String? archivoId,
   }) async {
     final featureNumber = featureIndex + 1;
 
     try {
-      final rawProps = feature['properties'];
-      final propsOriginal = rawProps is Map
-          ? Map<String, dynamic>.from(rawProps)
-          : <String, dynamic>{};
-      final props = GeoJsonMapper.normalizeProperties(propsOriginal);
+        final props = _preparedGeoJsonProps(feature);
       final geometry = feature['geometry'] is Map
           ? Map<String, dynamic>.from(feature['geometry'] as Map)
           : null;
@@ -716,6 +1065,8 @@ class SincronizacionService {
         }
       }
 
+      if (archivoId != null) predioData['archivo_id'] = archivoId;
+
       final nuevoPredio = await _withRetry(
         () => _prediosRepo.createPredio(predioData),
         operationName: 'createPredio',
@@ -769,6 +1120,7 @@ class SincronizacionService {
           'identificacion': false,
           'levantamiento': false,
           'negociacion': false,
+            if (archivoId != null) 'archivo_id': archivoId,
         };
 
         final nuevoPredio = await _withRetry(
@@ -801,10 +1153,7 @@ class SincronizacionService {
         );
       } catch (e2) {
         final minError = 'Feature $featureNumber (min): ${e2.toString()}';
-        final rawProps = feature['properties'];
-        final propsConError = rawProps is Map
-            ? Map<String, dynamic>.from(rawProps)
-            : <String, dynamic>{};
+        final propsConError = _preparedGeoJsonProps(feature);
         propsConError['_syncStatus'] = 'error';
         propsConError['_syncSource'] = 'geojson_import';
         propsConError['_syncAt'] = DateTime.now().toIso8601String();
