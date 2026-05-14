@@ -370,8 +370,26 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         .toList();
   }
 
+  List<Map<String, dynamic>> _xlsxRowsAsFeatures(XlsxParseResult parseResult) {
+    final out = <Map<String, dynamic>>[];
+    for (final hoja in parseResult.hojas) {
+      for (final row in hoja.rows) {
+        out.add({
+          'type': 'Feature',
+          'properties': {
+            ...row,
+            '_sheet': hoja.hoja,
+            '_table': hoja.tabla.name,
+          },
+        });
+      }
+    }
+    return out;
+  }
+
   /// Sincroniza, vincula y persiste en BD; después renderiza en mapa.
   Future<void> _guardarYVerEnMapa() async {
+    if (_sincronizando) return;
     if (_geoJsonData == null) return;
     final features = _extraerFeatures();
     if (features.isEmpty) return;
@@ -1044,8 +1062,11 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   }
 
   Future<void> _inyectarXlsxEnTablas() async {
+    if (_sincronizando) return;
     final parseResult = _xlsxParseResult;
     if (parseResult == null) return;
+
+    final xlsxFeatures = _xlsxRowsAsFeatures(parseResult);
 
     if (!CloudDataConfig.isRemoteDataEnabled) {
       await _inyectarXlsxLocal(parseResult);
@@ -1085,8 +1106,9 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         try {
           final archivosRepo = ref.read(localArchivosRepositoryProvider);
           final saved = await archivosRepo.saveArchivo(
+            customId: fileId,
             nombre: _archivoSeleccionado!.name,
-            features: const [],
+            features: xlsxFeatures,
             rowCount: resultado.procesados,
             sincronizado: true,
             encontrados: resultado.actualizados,
@@ -1100,7 +1122,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
         ref.read(cargaProvider.notifier).addFile(
           _archivoSeleccionado!.name,
-          const [],
+          xlsxFeatures,
           bdId: bdId,
           guardadoEnBD: bdId != null,
           sincronizado: true,
@@ -1128,6 +1150,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
   }
 
   Future<void> _inyectarXlsxLocal(XlsxParseResult parseResult) async {
+    if (_sincronizando) return;
     setState(() => _sincronizando = true);
 
     var procesados = 0;
@@ -1299,12 +1322,15 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
 
       // Registrar en la lista de archivos importados
       if (_archivoSeleccionado != null) {
+        final fileId = const Uuid().v4();
+        final xlsxFeatures = _xlsxRowsAsFeatures(parseResult);
         String? bdId;
         try {
           final archivosRepo = ref.read(localArchivosRepositoryProvider);
           final saved = await archivosRepo.saveArchivo(
+            customId: fileId,
             nombre: _archivoSeleccionado!.name,
-            features: const [],
+            features: xlsxFeatures,
             rowCount: procesados,
             sincronizado: true,
             encontrados: actualizados,
@@ -1317,7 +1343,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         }
         ref.read(cargaProvider.notifier).addFile(
           _archivoSeleccionado!.name,
-          const [],
+          xlsxFeatures,
           bdId: bdId,
           guardadoEnBD: bdId != null,
           sincronizado: true,
@@ -1325,6 +1351,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
           encontrados: actualizados,
           errores: errores,
           rowCount: procesados,
+          fileId: fileId,
         );
       }
 

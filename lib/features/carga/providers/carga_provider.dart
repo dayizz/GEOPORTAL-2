@@ -134,7 +134,14 @@ class CargaNotifier extends StateNotifier<List<ImportedFile>> {
       creados: creados,
       errores: errores,
     );
-    state = [file, ...state];
+
+    final deduped = state.where((existing) {
+      if (existing.id == id) return false;
+      if (bdId != null && existing.bdId == bdId) return false;
+      return true;
+    }).toList(growable: false);
+
+    state = [file, ...deduped];
   }
 
   void removeFile(String id) {
