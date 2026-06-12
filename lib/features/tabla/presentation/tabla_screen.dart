@@ -1,0 +1,1916 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../shared/widgets/app_scaffold.dart';
+import '../../../core/constants/app_colors.dart';
+import '../../mapa/providers/mapa_provider.dart';
+import '../../predios/data/predios_repository.dart';
+import '../../predios/models/predio.dart';
+import '../../predios/providers/local_predios_provider.dart';
+import '../../predios/providers/predios_provider.dart';
+import '../../propietarios/providers/local_propietarios_provider.dart';
+import '../../propietarios/providers/propietarios_provider.dart';
+import '../providers/ocr_provider.dart';
+import '../services/pdf_ocr_service.dart';
+
+class TablaScreen extends ConsumerStatefulWidget {
+  const TablaScreen({super.key});
+
+  @override
+  ConsumerState<TablaScreen> createState() => _TablaScreenState();
+}
+
+class _TablaScreenState extends ConsumerState<TablaScreen> {
+  static const _proyectos = ['TQI', 'TSNL', 'TAP', 'TQM'];
+
+  final _searchCtrl = TextEditingController();
+  final _verticalScroll = ScrollController();
+  final Map<String, Predio> _prediosOptimistas = {};
+  List<Predio> _ultimosPredios = const [];
+
+  String _proyectoActual = 'TQI';
+  String _busqueda = '';
+  Set<String> _filtroTramos = <String>{};
+  Set<String> _filtroTipos = <String>{};
+  Set<String> _filtroCop = <String>{}; // 'SI' | 'NO'
+  Set<String> _filtroEstatus = <String>{}; // 'LIBERADO' | 'NO LIBERADO'
+
+  final _nf = NumberFormat('#,##0.00');
+  final _nf4 = NumberFormat('0.0000');
+  bool _normalizacionInicialAplicada = false;
+
+  // Paginación
+  static const int _rowsPerPage = 50;
+  int _currentPage = 0;
+
+  int get _startRow => _currentPage * _rowsPerPage;
+  void _goToPage(int page, int totalRows) {
+    final maxPage = (totalRows / _rowsPerPage).ceil() - 1;
+    setState(() {
+      _currentPage = page.clamp(0, maxPage);
+    });
+    _verticalScroll.jumpTo(0);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _normalizarDatosLocalesExistentes();
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    _verticalScroll.dispose();
+    super.dispose();
+  }
+
+  void _normalizarDatosLocalesExistentes() {
+    if (_normalizacionInicialAplicada || !mounted) return;
+    _normalizacionInicialAplicada = true;
+
+    final prediosActualizados = ref
+        .read(localPrediosProvider.notifier)
+        .normalizeExistingData();
+    final prediosDeduplicados = ref
+        .read(localPrediosProvider.notifier)
+        .deduplicateExistingData();
+    final propietariosActualizados = ref
+        .read(localPropietariosProvider.notifier)
+        .normalizeExistingData();
+
+    final totalActualizados =
+        prediosActualizados + propietariosActualizados + prediosDeduplicados;
+    if (totalActualizados > 0) {
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+      ref.invalidate(propietariosListProvider);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Normalizacion aplicada: $prediosActualizados predio(s) y '
+            '$propietariosActualizados propietario(s). '
+            '${prediosDeduplicados > 0 ? "Duplicados eliminados: $prediosDeduplicados." : ""}',
+          ),
+        ),
+      );
+    }
+  }
+
+  // Memoización de filtros
+  List<Predio>? _lastAll;
+  String? _lastProyecto;
+  String? _lastTramos;
+  String? _lastTipos;
+  String? _lastCop;
+  String? _lastEstatus;
+  String? _lastBusqueda;
+  List<Predio>? _lastFiltered;
+
+  String _setMemoKey(Set<String> values) {
+    if (values.isEmpty) return '';
+    final sorted = values.toList()..sort();
+    return sorted.join('|');
+  }
+
+  List<Predio> _applyFilters(List<Predio> all) {
+    final shouldRecompute =
+        _lastAll != all ||
+        _lastProyecto != _proyectoActual ||
+        _lastTramos != _setMemoKey(_filtroTramos) ||
+        _lastTipos != _setMemoKey(_filtroTipos) ||
+        _lastCop != _setMemoKey(_filtroCop) ||
+        _lastEstatus != _setMemoKey(_filtroEstatus) ||
+        _lastBusqueda != _busqueda;
+    if (!shouldRecompute && _lastFiltered != null) {
+      return _lastFiltered!;
+    }
+    final filtered = all.where((p) {
+      if (_predioProyecto(p) != _proyectoActual) return false;
+      final tramoValue = _normalizeFilterToken(p.tramo);
+      if (_filtroTramos.isNotEmpty && !_filtroTramos.contains(tramoValue)) {
+        return false;
+      }
+      final tipoValue = _normalizeTipoPropiedadFilter(p.tipoPropiedad);
+      if (_filtroTipos.isNotEmpty && !_filtroTipos.contains(tipoValue)) {
+        return false;
+      }
+      final estatus = _normalizeEstatusFilter(p.estatusGestion);
+      if (_filtroEstatus.isNotEmpty && !_filtroEstatus.contains(estatus)) {
+        return false;
+      }
+      if (_filtroCop.isNotEmpty) {
+        final copValue = p.cop ? 'SI' : 'NO';
+        if (!_filtroCop.contains(copValue)) return false;
+      }
+      if (_busqueda.isNotEmpty) {
+        final q = _busqueda.toLowerCase();
+        return p.claveCatastral.toLowerCase().contains(q) ||
+            (p.propietarioNombre?.toLowerCase().contains(q) ?? false) ||
+            (p.ejido?.toLowerCase().contains(q) ?? false);
+      }
+      return true;
+    }).toList();
+    _lastAll = all;
+    _lastProyecto = _proyectoActual;
+    _lastTramos = _setMemoKey(_filtroTramos);
+    _lastTipos = _setMemoKey(_filtroTipos);
+    _lastCop = _setMemoKey(_filtroCop);
+    _lastEstatus = _setMemoKey(_filtroEstatus);
+    _lastBusqueda = _busqueda;
+    _lastFiltered = filtered;
+    return filtered;
+  }
+
+  String _normalizeFilterToken(String? value) {
+    return (value ?? '').trim().toUpperCase();
+  }
+
+  String _normalizeTipoPropiedadFilter(String? value) {
+    final token = _normalizeFilterToken(
+      value,
+    ).replaceAll('_', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (token.contains('DOMINIO') && token.contains('PLENO')) {
+      return 'DOMINIO PLENO';
+    }
+    return token;
+  }
+
+  String _normalizeEstatusFilter(String? value) {
+    final token = _normalizeFilterToken(
+      value,
+    ).replaceAll('_', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (token.contains('NO') && token.contains('LIBERAD')) return 'NO LIBERADO';
+    if (token.contains('LIBERAD')) return 'LIBERADO';
+    if (token.contains('SIN') && token.contains('ESTATUS'))
+      return 'SIN ESTATUS';
+    return token;
+  }
+
+  int _totalActiveFilters() {
+    return _filtroTramos.length +
+        _filtroTipos.length +
+        _filtroCop.length +
+        _filtroEstatus.length;
+  }
+
+  String _predioProyecto(Predio predio) {
+    final proyectoDirecto = predio.proyecto?.trim().toUpperCase();
+    if (proyectoDirecto != null && _proyectos.contains(proyectoDirecto)) {
+      return proyectoDirecto;
+    }
+
+    final clave = predio.claveCatastral.trim().toUpperCase();
+    final compact = clave.replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    if (compact.startsWith('TQI') || compact.startsWith('QI')) return 'TQI';
+    if (compact.startsWith('TSNL') ||
+        compact.startsWith('SNL') ||
+        compact.startsWith('SL'))
+      return 'TSNL';
+    if (compact.startsWith('TAP') || compact.startsWith('AP')) return 'TAP';
+    if (compact.startsWith('TQM') || compact.startsWith('QM')) return 'TQM';
+
+    final contenido = [
+      predio.claveCatastral,
+      predio.ejido ?? '',
+      predio.poligonoDwg ?? '',
+      predio.oficio ?? '',
+      predio.pdfUrl ?? '',
+      predio.copFirmado ?? '',
+    ].join(' ').toUpperCase();
+
+    for (final proyecto in _proyectos) {
+      if (contenido.contains(proyecto)) return proyecto;
+    }
+
+    return 'Sin proyecto';
+  }
+
+  int _conteoProyecto(List<Predio> predios, String proyecto) {
+    return predios
+        .where((predio) => _predioProyecto(predio) == proyecto)
+        .length;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prediosAsync = ref.watch(prediosListProvider);
+    Widget content;
+
+    if (prediosAsync.isLoading) {
+      content = const Center(child: CircularProgressIndicator());
+    } else if (prediosAsync.hasError) {
+      content = Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: AppColors.danger),
+            const SizedBox(height: 12),
+            Text(
+              'Error al cargar los datos',
+              style: TextStyle(color: AppColors.danger),
+            ),
+            const SizedBox(height: 8),
+            Text(prediosAsync.error.toString(), textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => ref.refresh(prediosListProvider),
+              child: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      final remoteData = prediosAsync.asData?.value;
+      final prediosList = remoteData ?? _ultimosPredios;
+      if (prediosList.isEmpty) {
+        content = Column(
+          children: [
+            _buildTopBar(0, const []),
+            const Divider(height: 1),
+            const Expanded(
+              child: Center(
+                child: Text(
+                  'No hay predios registrados aún. Importa un archivo o agrega datos para comenzar.',
+                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ],
+        );
+      } else {
+        _ultimosPredios = prediosList;
+        final allPredios = prediosList
+            .map((predio) => _prediosOptimistas[predio.id] ?? predio)
+            .toList(growable: false);
+        final filtered = _applyFilters(allPredios);
+        final totalPages = (filtered.length / _rowsPerPage).ceil();
+        final pageRows = filtered.skip(_startRow).take(_rowsPerPage).toList();
+
+        final proyectoSolicitado = ref.watch(gestionProyectoProvider);
+        if (proyectoSolicitado != null &&
+            _proyectos.contains(proyectoSolicitado) &&
+            proyectoSolicitado != _proyectoActual) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() => _proyectoActual = proyectoSolicitado);
+            ref.read(gestionProyectoProvider.notifier).state = null;
+          });
+        }
+
+        content = Column(
+          children: [
+            _buildTopBar(filtered.length, allPredios),
+            const Divider(height: 1),
+            if (totalPages > 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.first_page),
+                      onPressed: _currentPage > 0
+                          ? () => _goToPage(0, filtered.length)
+                          : null,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      onPressed: _currentPage > 0
+                          ? () => _goToPage(_currentPage - 1, filtered.length)
+                          : null,
+                    ),
+                    Text('Página ${_currentPage + 1} de $totalPages'),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      onPressed: _currentPage < totalPages - 1
+                          ? () => _goToPage(_currentPage + 1, filtered.length)
+                          : null,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.last_page),
+                      onPressed: _currentPage < totalPages - 1
+                          ? () => _goToPage(totalPages - 1, filtered.length)
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            Expanded(child: _buildTable(pageRows)),
+          ],
+        );
+      }
+    }
+
+    return AppScaffold(currentIndex: 1, title: 'Gestion', child: content);
+  }
+
+  Widget _buildTopBar(int visible, List<Predio> allPredios) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              const Icon(
+                Icons.folder_outlined,
+                size: 16,
+                color: AppColors.textSecondary,
+              ),
+              const Text(
+                'Proyecto:',
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 2,
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _proyectoActual,
+                      isDense: true,
+                      icon: const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 20,
+                      ),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primary,
+                      ),
+                      dropdownColor: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      items: _proyectos.map((proyecto) {
+                        final count = _conteoProyecto(allPredios, proyecto);
+                        return DropdownMenuItem<String>(
+                          value: proyecto,
+                          child: Row(
+                            children: [
+                              Text(
+                                proyecto,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 13,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(
+                                    alpha: 0.12,
+                                  ),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  '$count',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => _proyectoActual = v);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 40,
+                  child: TextField(
+                    controller: _searchCtrl,
+                    decoration: InputDecoration(
+                      hintText: 'Buscar propietario, ID SEDATU, ejido…',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _busqueda.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: () {
+                                _searchCtrl.clear();
+                                setState(() => _busqueda = '');
+                              },
+                            )
+                          : null,
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 0,
+                        horizontal: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      isDense: true,
+                    ),
+                    onChanged: (v) => setState(() => _busqueda = v),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                icon: const Icon(Icons.filter_alt_outlined, size: 18),
+                label: Text(
+                  'Filtros${_totalActiveFilters() > 0 ? ' (${_totalActiveFilters()})' : ''}',
+                ),
+                style: TextButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: () => _showFiltros(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '$visible de ${_conteoProyecto(allPredios, _proyectoActual)} predios en $_proyectoActual',
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          if (_filtroTramos.isNotEmpty ||
+              _filtroTipos.isNotEmpty ||
+              _filtroCop.isNotEmpty ||
+              _filtroEstatus.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final tramo in (_filtroTramos.toList()..sort()))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Chip(
+                        label: Text('T/F/S: $tramo'),
+                        onDeleted: () =>
+                            setState(() => _filtroTramos.remove(tramo)),
+                        labelStyle: const TextStyle(color: Colors.white),
+                        backgroundColor: AppColors.primary,
+                        deleteIcon: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  for (final tipo in (_filtroTipos.toList()..sort()))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Chip(
+                        label: Text(tipo),
+                        onDeleted: () =>
+                            setState(() => _filtroTipos.remove(tipo)),
+                        labelStyle: const TextStyle(color: Colors.white),
+                        backgroundColor: AppColors.primary,
+                        deleteIcon: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  for (final cop in (_filtroCop.toList()..sort()))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Chip(
+                        label: Text('COP: $cop'),
+                        onDeleted: () => setState(() => _filtroCop.remove(cop)),
+                        labelStyle: const TextStyle(color: Colors.white),
+                        backgroundColor: AppColors.primary,
+                        deleteIcon: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  for (final estatus in (_filtroEstatus.toList()..sort()))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Chip(
+                        label: Text('Estatus: $estatus'),
+                        onDeleted: () =>
+                            setState(() => _filtroEstatus.remove(estatus)),
+                        labelStyle: const TextStyle(color: Colors.white),
+                        backgroundColor: AppColors.primary,
+                        deleteIcon: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTable(List<Predio> rows) {
+    if (rows.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.table_rows_outlined, size: 48, color: Colors.grey),
+            const SizedBox(height: 12),
+            Text(
+              'Sin registros para $_proyectoActual',
+              style: const TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      );
+    }
+
+    const rawWidths = <double>[
+      44, // ACCIONES
+      55, // VER MAPA
+      170, // CLAVE
+      50, // T/F/S
+      95, // TIPO
+      120, // ESTRUCTURA
+      140, // PROPIETARIO
+      130, // ESTADO / MUNICIPIO
+      110, // EJIDO
+      72, // KM INICIO
+      72, // KM FIN
+      72, // KM EFEC
+      80, // M²
+      46, // PDF
+      82, // TIPO LIBERACION
+      92, // FECHA
+      90, // ESTATUS
+      120, // OFICIO
+      54, // IDENT.
+      54, // LEVANT.
+      54, // NEGOC.
+      130, // OBSERVACIONES
+    ];
+
+    const headers = <String>[
+      '',
+      'MAPA',
+      'CLAVE',
+      'T/F/S',
+      'TIPO',
+      'ESTRUCTURA',
+      'PROPIETARIO',
+      'ESTADO/\nMUNICIPIO',
+      'EJIDO',
+      'KM INICIO',
+      'KM FIN',
+      'KM EFEC',
+      'M²',
+      'PDF',
+      'TIPO DE\nLIBERACION',
+      'FECHA',
+      'ESTATUS',
+      'OFICIO',
+      'IDENT.',
+      'LEVANT.',
+      'NEGOC.',
+      'OBSERVACIONES',
+    ];
+
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final rawTotal =
+            rawWidths.reduce((a, b) => a + b) + rawWidths.length * 1.0;
+        final scale = (constraints.maxWidth / rawTotal).clamp(0.3, 1.4);
+        final colWidths = rawWidths.map((w) => w * scale).toList();
+        final totalWidth = constraints.maxWidth;
+
+        return Scrollbar(
+          controller: _verticalScroll,
+          thumbVisibility: true,
+          child: Column(
+            children: [
+              // Header fijo
+              _buildHeaderRow(headers, colWidths, totalWidth),
+              const Divider(height: 1, thickness: 1.5, color: AppColors.border),
+              // Filas
+              Expanded(
+                child: ListView.builder(
+                  controller: _verticalScroll,
+                  itemCount: rows.length,
+                  itemExtent: 38,
+                  itemBuilder: (ctx2, idx) =>
+                      _buildDataRow(rows[idx], colWidths, idx),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHeaderRow(
+    List<String> headers,
+    List<double> widths,
+    double total,
+  ) {
+    return Container(
+      color: AppColors.primary.withValues(alpha: 0.92),
+      height: 40,
+      child: Row(
+        children: List.generate(headers.length, (i) {
+          return _headerCell(headers[i], widths[i]);
+        }),
+      ),
+    );
+  }
+
+  Widget _headerCell(String label, double width) {
+    return Container(
+      width: width,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: Colors.white24, width: 0.5)),
+      ),
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 11,
+        ),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Future<void> _savePredio(Predio previous, Predio updated) async {
+    setState(() {
+      _prediosOptimistas[updated.id] = updated;
+    });
+
+    if (updated.id.startsWith('local-')) {
+      ref.read(localPrediosProvider.notifier).updatePredio(updated);
+      ref.invalidate(prediosListProvider);
+      return;
+    }
+
+    try {
+      final saved = await ref
+          .read(prediosRepositoryProvider)
+          .updatePredio(updated.id, updated.toMap());
+      if (!mounted) return;
+      setState(() {
+        _prediosOptimistas[updated.id] = saved;
+      });
+      ref.invalidate(prediosListProvider);
+      ref.invalidate(prediosMapaProvider);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _prediosOptimistas[previous.id] = previous;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo actualizar el predio en la base de datos.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+    }
+  }
+
+  String? _pdfUrlFor(Predio predio) {
+    final pdfUrl = predio.pdfUrl?.trim();
+    if (pdfUrl != null && pdfUrl.isNotEmpty) return pdfUrl;
+
+    final legacy = predio.copFirmado?.trim();
+    if (legacy != null && legacy.isNotEmpty && legacy.startsWith('http')) {
+      return legacy;
+    }
+    return null;
+  }
+
+  String _copFechaLabel(Predio predio) {
+    final fecha = predio.copFecha;
+    if (fecha == null) return '-';
+    return DateFormat('dd/MM/yyyy').format(fecha);
+  }
+
+  Future<void> _openPdfUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      throw Exception('La URL del PDF es invalida.');
+    }
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) {
+      throw Exception('No se pudo abrir el PDF.');
+    }
+  }
+
+  bool _isGoogleDrivePdfUrl(String value) {
+    final uri = Uri.tryParse(value.trim());
+    if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http')) {
+      return false;
+    }
+    final host = uri.host.toLowerCase();
+    if (host != 'drive.google.com') return false;
+
+    final path = uri.path.toLowerCase();
+    final hasFilePath = path.contains('/file/d/');
+    final hasUcPath =
+        path.startsWith('/uc') && uri.queryParameters.containsKey('id');
+    final hasOpenPath =
+        path.startsWith('/open') && uri.queryParameters.containsKey('id');
+    return hasFilePath || hasUcPath || hasOpenPath;
+  }
+
+  Future<String?> _askGoogleDrivePdfUrl(Predio predio) async {
+    final controller = TextEditingController(text: _pdfUrlFor(predio) ?? '');
+    String? error;
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocalState) => AlertDialog(
+            title: const Text('Vincular COT/DOT (Google Drive)'),
+            content: SizedBox(
+              width: 520,
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'URL del PDF',
+                  hintText:
+                      'https://drive.google.com/file/d/.../view?usp=sharing',
+                  errorText: error,
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final value = controller.text.trim();
+                  if (value.isEmpty) {
+                    setLocalState(() {
+                      error = 'Debes ingresar una URL de Google Drive.';
+                    });
+                    return;
+                  }
+                  if (!_isGoogleDrivePdfUrl(value)) {
+                    setLocalState(() {
+                      error = 'Solo se permite URL de PDF desde Google Drive.';
+                    });
+                    return;
+                  }
+                  Navigator.pop(ctx, value);
+                },
+                child: const Text('Vincular'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _showCopDotActions(Predio predio, String existingUrl) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.open_in_new_rounded),
+              title: const Text('Abrir PDF'),
+              onTap: () => Navigator.pop(ctx, 'open'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.text_fields_rounded),
+              title: const Text('Leer datos (OCR)'),
+              subtitle: const Text(
+                'Detecta km, m² y fecha de firma',
+                style: TextStyle(fontSize: 12),
+              ),
+              onTap: () => Navigator.pop(ctx, 'ocr'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.link_rounded),
+              title: const Text('Reemplazar URL'),
+              onTap: () => Navigator.pop(ctx, 'replace'),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.delete_outline_rounded,
+                color: AppColors.danger,
+              ),
+              title: const Text(
+                'Eliminar vinculo',
+                style: TextStyle(color: AppColors.danger),
+              ),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+
+    if (action == 'open') {
+      await _openPdfUrl(existingUrl);
+      return;
+    }
+
+    if (action == 'ocr') {
+      await _handleOcrExtraction(predio, existingUrl);
+      return;
+    }
+
+    if (action == 'replace') {
+      final newUrl = await _askGoogleDrivePdfUrl(predio);
+      if (newUrl == null || newUrl.isEmpty) return;
+
+      await _savePredio(
+        predio,
+        predio.copyWith(
+          pdfUrl: newUrl,
+          copFirmado: newUrl,
+          copFecha: DateTime.now(),
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('URL de Google Drive actualizada.'),
+            backgroundColor: AppColors.secondary,
+          ),
+        );
+      }
+
+      // Auto-ejecutar OCR después de vincular
+      if (mounted) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            _handleOcrExtraction(predio, newUrl);
+          }
+        });
+      }
+      return;
+    }
+
+    if (action == 'delete') {
+      await _savePredio(
+        predio,
+        predio.copyWith(pdfUrl: '', copFirmado: '', updatedAt: DateTime.now()),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Vinculo COT/DOT eliminado.'),
+            backgroundColor: AppColors.warning,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleCopPdfTap(Predio predio) async {
+    final existingUrl = _pdfUrlFor(predio);
+    if (existingUrl != null) {
+      await _showCopDotActions(predio, existingUrl);
+      return;
+    }
+
+    final url = await _askGoogleDrivePdfUrl(predio);
+    if (url == null || url.isEmpty) return;
+
+    try {
+      final updatedPredio = predio.copyWith(
+        pdfUrl: url,
+        copFirmado: url,
+        copFecha: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      await _savePredio(predio, updatedPredio);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('URL de Google Drive vinculada correctamente.'),
+            backgroundColor: AppColors.secondary,
+          ),
+        );
+      }
+
+      // Auto-ejecutar OCR después de vincular
+      if (mounted) {
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) {
+            _handleOcrExtraction(updatedPredio, url);
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleOcrExtraction(Predio predio, String pdfUrl) async {
+    if (!mounted) return;
+
+    // Mostrar dialog con loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        content: SizedBox(
+          width: 300,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              const Text(
+                'Leyendo PDF con OCR...',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Detectando km, m² y fecha',
+                style: TextStyle(fontSize: 12, color: AppColors.textLight),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      // Ejecutar OCR
+      final ocrNotifier = ref.read(ocrExtractionProvider.notifier);
+      await ocrNotifier.extractFromGoogleDriveUrl(pdfUrl);
+
+      final ocrState = ref.read(ocrExtractionProvider);
+      final ocrData = ocrState.data;
+
+      if (!mounted) return;
+      Navigator.pop(context); // Cerrar loading dialog
+
+      if (ocrData == null || !ocrData.hasAnyData) {
+        _showOcrResultDialog(
+          'Sin datos detectados',
+          'No se encontraron km, m² o fecha de firma en el PDF.\n\nVerifica que el documento sea legible y contenga esta información.',
+        );
+        return;
+      }
+
+      // Mostrar preview de datos extraídos
+      final shouldUpdate = await _showOcrPreviewDialog(ocrData);
+      if (shouldUpdate == true && mounted) {
+        // Actualizar predio con datos extraídos
+        final updated = predio.copyWith(
+          kmInicio: ocrData.kmInicio ?? predio.kmInicio,
+          kmFin: ocrData.kmFin ?? predio.kmFin,
+          superficie: ocrData.superficie ?? predio.superficie,
+          copFecha: ocrData.fechaFirma ?? predio.copFecha,
+          updatedAt: DateTime.now(),
+        );
+
+        await _savePredio(predio, updated);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Datos auto-rellenados: '
+                '${ocrData.kmInicio != null ? '✓km inicio ' : ''}'
+                '${ocrData.kmFin != null ? '✓km fin ' : ''}'
+                '${ocrData.superficie != null ? '✓m² ' : ''}'
+                '${ocrData.fechaFirma != null ? '✓fecha' : ''}',
+              ),
+              backgroundColor: AppColors.secondary,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Cerrar loading dialog
+      _showOcrResultDialog(
+        'Error en OCR',
+        'No se pudo procesar el PDF: ${e.toString()}',
+      );
+    }
+  }
+
+  Future<bool?> _showOcrPreviewDialog(PdfOcrData ocrData) async {
+    final fmtNum = NumberFormat('0.0000');
+    final fmtNum2 = NumberFormat('0.00');
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Datos extraídos del PDF'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildOcrDataRow(
+                'KM Inicio',
+                ocrData.kmInicio != null
+                    ? fmtNum.format(ocrData.kmInicio!)
+                    : 'No detectado',
+                ocrData.kmInicio != null,
+              ),
+              const SizedBox(height: 12),
+              _buildOcrDataRow(
+                'KM Fin',
+                ocrData.kmFin != null
+                    ? fmtNum.format(ocrData.kmFin!)
+                    : 'No detectado',
+                ocrData.kmFin != null,
+              ),
+              const SizedBox(height: 12),
+              _buildOcrDataRow(
+                'Superficie (m²)',
+                ocrData.superficie != null
+                    ? fmtNum2.format(ocrData.superficie!)
+                    : 'No detectado',
+                ocrData.superficie != null,
+              ),
+              const SizedBox(height: 12),
+              _buildOcrDataRow(
+                'Fecha Firma',
+                ocrData.fechaFirma != null
+                    ? DateFormat('dd/MM/yyyy').format(ocrData.fechaFirma!)
+                    : 'No detectada',
+                ocrData.fechaFirma != null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Auto-rellenar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOcrDataRow(String label, String value, bool detected) {
+    return Row(
+      children: [
+        Icon(
+          detected ? Icons.check_circle : Icons.circle_outlined,
+          color: detected ? AppColors.secondary : AppColors.textLight,
+          size: 20,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textLight,
+                ),
+              ),
+              Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showOcrResultDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Aceptar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDataRow(Predio p, List<double> widths, int idx) {
+    final isEven = idx % 2 == 0;
+    final tipoColor = AppColors.tipoPropiedadColor(p.tipoPropiedad);
+    final propietarioLabel =
+        p.propietario?.nombreCompleto ?? p.propietarioNombre ?? '-';
+    final estadoMunicipio = [
+      if (p.estado != null && p.estado!.isNotEmpty) p.estado!,
+      if (p.municipio != null && p.municipio!.isNotEmpty) p.municipio!,
+    ].join('/');
+
+    return Container(
+      height: 38,
+      decoration: BoxDecoration(
+        color: isEven ? Colors.white : const Color(0xFFF8F9FA),
+        border: const Border(
+          bottom: BorderSide(color: AppColors.border, width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          // ACCIONES
+          _actionCell(p, widths[0]),
+          // VER EN MAPA
+          _mapCell(p, widths[1]),
+          // CLAVE
+          _dataCell(
+            p.claveCatastral,
+            widths[2],
+            style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            color: tipoColor.withValues(alpha: 0.08),
+          ),
+          // T/F/S
+          _tramoBadgeCell(p.tramo, widths[3]),
+          // TIPO
+          _tipoBadgeCell(p.tipoPropiedad, tipoColor, widths[4]),
+          // ESTRUCTURA
+          _dataCell(p.estructura ?? '-', widths[5]),
+          // PROPIETARIO
+          _dataCell(propietarioLabel, widths[6]),
+          // ESTADO / MUNICIPIO
+          _dataCell(estadoMunicipio.isEmpty ? '-' : estadoMunicipio, widths[7]),
+          // EJIDO
+          _dataCell(p.ejido ?? '-', widths[8]),
+          // KM INICIO
+          _numCell(p.kmInicio, widths[9], decimals: 4),
+          // KM FIN
+          _numCell(p.kmFin, widths[10], decimals: 4),
+          // KM EFEC
+          _numCell(p.kmEfectivos, widths[11], decimals: 4),
+          // M²
+          _numCell(p.superficie, widths[12], decimals: 2),
+          // PDF (icono de estado)
+          _copPdfIndicatorCell(p, widths[13]),
+          // TIPO LIBERACION
+          _tipoLiberacionChipCell(p, widths[14]),
+          // FECHA COP/DOT
+          _dataCell(_copFechaLabel(p), widths[15]),
+          // ESTATUS
+          _estatusCell(p, widths[16]),
+          // OFICIO
+          _dataCell(p.oficio ?? '-', widths[17]),
+          // IDENTIFICACION (tappable)
+          _tappableBoolCell(
+            p.identificacion,
+            widths[18],
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(
+                identificacion: !p.identificacion,
+                updatedAt: DateTime.now(),
+              ),
+            ),
+          ),
+          // LEVANTAMIENTO (tappable)
+          _tappableBoolCell(
+            p.levantamiento,
+            widths[19],
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(
+                levantamiento: !p.levantamiento,
+                updatedAt: DateTime.now(),
+              ),
+            ),
+          ),
+          // NEGOCIACION (tappable)
+          _tappableBoolCell(
+            p.negociacion,
+            widths[20],
+            onTap: () => _savePredio(
+              p,
+              p.copyWith(
+                negociacion: !p.negociacion,
+                updatedAt: DateTime.now(),
+              ),
+            ),
+          ),
+          // OBSERVACIONES
+          _dataCell(p.situacionSocial ?? '-', widths[21]),
+        ],
+      ),
+    );
+  }
+
+  Widget _estatusCell(Predio predio, double width) {
+    final estatus = predio.estatusGestion;
+    final color = switch (estatus) {
+      'Liberado' => AppColors.secondary,
+      'No liberado' => AppColors.danger,
+      _ => Colors.grey,
+    };
+
+    return Container(
+      width: width,
+      height: double.infinity,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          estatus,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+
+  Widget _actionCell(Predio p, double width) {
+    return InkWell(
+      onTap: () => context.push('/tabla/predio/${p.id}'),
+      child: Container(
+        width: width,
+        height: double.infinity,
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          border: Border(
+            right: BorderSide(color: AppColors.border, width: 0.5),
+          ),
+        ),
+        child: const Icon(
+          Icons.edit_outlined,
+          size: 16,
+          color: AppColors.primary,
+        ),
+      ),
+    );
+  }
+
+  /// Botón "Ver en Mapa": navega al mapa y hace fly-to al predio.
+  Widget _mapCell(Predio p, double width) {
+    final vinculado = p.poligonoInsertado || p.geometry != null;
+    return Tooltip(
+      message: vinculado
+          ? 'Vinculado: ver en mapa'
+          : 'No vinculado: vincular manualmente',
+      child: InkWell(
+        onTap: () {
+          if (!vinculado) {
+            ref.read(manualVincularPredioIdProvider.notifier).state = p.id;
+            context.go('/mapa');
+            return;
+          }
+          ref.read(focusPredioIdProvider.notifier).state = p.id;
+          context.go('/mapa');
+        },
+        child: Container(
+          width: width,
+          height: double.infinity,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            border: Border(
+              right: BorderSide(color: AppColors.border, width: 0.5),
+            ),
+          ),
+          child: Icon(
+            vinculado ? Icons.link_rounded : Icons.link_off_rounded,
+            size: 16,
+            color: vinculado ? AppColors.secondary : AppColors.danger,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dataCell(
+    String text,
+    double width, {
+    TextStyle? style,
+    Color? color,
+  }) {
+    return Container(
+      width: width,
+      height: double.infinity,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: color,
+        border: const Border(
+          right: BorderSide(color: AppColors.border, width: 0.5),
+        ),
+      ),
+      child: Text(
+        text,
+        style: style ?? const TextStyle(fontSize: 12),
+        overflow: TextOverflow.ellipsis,
+        maxLines: 1,
+      ),
+    );
+  }
+
+  Widget _numCell(double? value, double width, {int decimals = 2}) {
+    final text = value == null
+        ? '-'
+        : decimals == 4
+        ? _nf4.format(value)
+        : _nf.format(value);
+    return Container(
+      width: width,
+      height: double.infinity,
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 12,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _tappableBoolCell(
+    bool value,
+    double width, {
+    Color? trueColor,
+    Color? falseColor,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        width: width,
+        height: double.infinity,
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          border: Border(
+            right: BorderSide(color: AppColors.border, width: 0.5),
+          ),
+        ),
+        child: Icon(
+          value ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+          size: 18,
+          color: value
+              ? (trueColor ?? AppColors.secondary)
+              : (falseColor ?? Colors.grey.shade300),
+        ),
+      ),
+    );
+  }
+
+  Widget _copPdfIndicatorCell(Predio predio, double width) {
+    final hasPdf = _pdfUrlFor(predio) != null;
+    final iconColor = hasPdf ? AppColors.secondary : Colors.grey.shade400;
+    final tooltip = hasPdf
+        ? 'Abrir PDF vinculado'
+        : 'Vincular URL de Google Drive';
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: () => _handleCopPdfTap(predio),
+        child: Container(
+          width: width,
+          height: double.infinity,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            border: Border(
+              right: BorderSide(color: AppColors.border, width: 0.5),
+            ),
+          ),
+          child: Icon(Icons.description, size: 18, color: iconColor),
+        ),
+      ),
+    );
+  }
+
+  String _tipoLiberacionLabel(Predio predio) {
+    final url = _pdfUrlFor(predio);
+    if (url == null) return '-';
+
+    final source = url.toLowerCase();
+    if (source.contains('dot')) return 'DOT';
+    if (source.contains('cot')) return 'COT';
+    if (source.contains('convenio')) return 'COT';
+    if (source.contains('ocupacion')) return 'COT';
+    return 'PDF';
+  }
+
+  Widget _tipoLiberacionChipCell(Predio predio, double width) {
+    final label = _tipoLiberacionLabel(predio);
+    final color = switch (label) {
+      'DOT' => AppColors.warning,
+      'COT' => AppColors.secondary,
+      'PDF' => AppColors.info,
+      _ => Colors.grey,
+    };
+
+    return Container(
+      width: width,
+      height: double.infinity,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        child: Container(
+          width: double.infinity,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tramoBadgeCell(String tramo, double width) {
+    const colors = {
+      'T1': Color(0xFF3498DB),
+      'T2': Color(0xFF9B59B6),
+      'T3': Color(0xFFE67E22),
+      'T4': Color(0xFF1ABC9C),
+    };
+    final c = colors[tramo] ?? Colors.grey;
+    return Container(
+      width: width,
+      height: double.infinity,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: c.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          tramo,
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: c),
+        ),
+      ),
+    );
+  }
+
+  Widget _tipoBadgeCell(String tipo, Color color, double width) {
+    final label = tipo == 'DOMINIO PLENO' ? 'D.PLENO' : tipo;
+    return Container(
+      width: width,
+      height: double.infinity,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        border: Border(right: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showFiltros(BuildContext context) {
+    final tramos = Set<String>.from(_filtroTramos);
+    final tipos = Set<String>.from(_filtroTipos);
+    final cop = Set<String>.from(_filtroCop);
+    final estatus = Set<String>.from(_filtroEstatus);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          child: Material(
+            color: const Color(0xFFF1F3F5),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.filter_alt_outlined,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Filtros${tramos.length + tipos.length + cop.length + estatus.length > 0 ? ' (${tramos.length + tipos.length + cop.length + estatus.length})' : ''}',
+                        style: Theme.of(ctx).textTheme.titleLarge,
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () {
+                          setS(() {
+                            tramos.clear();
+                            tipos.clear();
+                            cop.clear();
+                            estatus.clear();
+                          });
+                        },
+                        style: TextButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: const Text('Limpiar todo'),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  Text(
+                    'T/F/S${tramos.isNotEmpty ? ' (${tramos.length})' : ''}',
+                    style: Theme.of(ctx).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children:
+                        [
+                              'T1',
+                              'T2',
+                              'T3',
+                              'T4',
+                              'T5',
+                              'F1',
+                              'F2',
+                              'F3',
+                              'F4',
+                              'F5',
+                              'S1',
+                              'S2',
+                              'S3',
+                              'S4',
+                              'S5',
+                            ]
+                            .map(
+                              (t) => FilterChip(
+                                label: Text(t),
+                                selected: tramos.contains(t),
+                                onSelected: (v) => setS(() {
+                                  if (v) {
+                                    tramos.add(t);
+                                  } else {
+                                    tramos.remove(t);
+                                  }
+                                }),
+                                labelStyle: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                checkmarkColor: Colors.white,
+                                backgroundColor: AppColors.primary,
+                                selectedColor: AppColors.primaryDark,
+                                side: BorderSide.none,
+                              ),
+                            )
+                            .toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Tipo de Propiedad${tipos.isNotEmpty ? ' (${tipos.length})' : ''}',
+                    style: Theme.of(ctx).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: ['SOCIAL', 'DOMINIO PLENO', 'PRIVADA']
+                        .map(
+                          (t) => FilterChip(
+                            label: Text(t),
+                            selected: tipos.contains(t),
+                            onSelected: (v) => setS(() {
+                              if (v) {
+                                tipos.add(t);
+                              } else {
+                                tipos.remove(t);
+                              }
+                            }),
+                            labelStyle: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            checkmarkColor: Colors.white,
+                            backgroundColor: AppColors.primary,
+                            selectedColor: AppColors.primaryDark,
+                            side: BorderSide.none,
+                          ),
+                        )
+                        .toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'C.O.P.${cop.isNotEmpty ? ' (${cop.length})' : ''}',
+                    style: Theme.of(ctx).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      FilterChip(
+                        label: const Text('Con COP'),
+                        selected: cop.contains('SI'),
+                        onSelected: (v) => setS(() {
+                          if (v) {
+                            cop.add('SI');
+                          } else {
+                            cop.remove('SI');
+                          }
+                        }),
+                        labelStyle: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        checkmarkColor: Colors.white,
+                        backgroundColor: AppColors.primary,
+                        selectedColor: AppColors.primaryDark,
+                        side: BorderSide.none,
+                      ),
+                      FilterChip(
+                        label: const Text('Sin COP'),
+                        selected: cop.contains('NO'),
+                        onSelected: (v) => setS(() {
+                          if (v) {
+                            cop.add('NO');
+                          } else {
+                            cop.remove('NO');
+                          }
+                        }),
+                        labelStyle: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        checkmarkColor: Colors.white,
+                        backgroundColor: AppColors.primary,
+                        selectedColor: AppColors.primaryDark,
+                        side: BorderSide.none,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Estatus${estatus.isNotEmpty ? ' (${estatus.length})' : ''}',
+                    style: Theme.of(ctx).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      FilterChip(
+                        label: const Text('Liberado'),
+                        selected: estatus.contains('LIBERADO'),
+                        onSelected: (v) => setS(() {
+                          if (v) {
+                            estatus.add('LIBERADO');
+                          } else {
+                            estatus.remove('LIBERADO');
+                          }
+                        }),
+                        labelStyle: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        checkmarkColor: Colors.white,
+                        backgroundColor: AppColors.primary,
+                        selectedColor: AppColors.primaryDark,
+                        side: BorderSide.none,
+                      ),
+                      FilterChip(
+                        label: const Text('No liberado'),
+                        selected: estatus.contains('NO LIBERADO'),
+                        onSelected: (v) => setS(() {
+                          if (v) {
+                            estatus.add('NO LIBERADO');
+                          } else {
+                            estatus.remove('NO LIBERADO');
+                          }
+                        }),
+                        labelStyle: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        checkmarkColor: Colors.white,
+                        backgroundColor: AppColors.primary,
+                        selectedColor: AppColors.primaryDark,
+                        side: BorderSide.none,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _filtroTramos = Set<String>.from(tramos);
+                          _filtroTipos = Set<String>.from(tipos);
+                          _filtroCop = cop;
+                          _filtroEstatus = estatus;
+                          _currentPage = 0;
+                        });
+                        Navigator.pop(ctx);
+                      },
+                      child: const Text('Aplicar filtros'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

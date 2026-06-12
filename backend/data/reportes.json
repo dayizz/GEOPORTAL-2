@@ -1,0 +1,1338 @@
+[
+  {
+    "folio_reporte": "REP-2026-001",
+    "created_at": "2026-05-19T18:04:23.411873+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "S1",
+      "para_nombre": "A",
+      "para_cargo": "B",
+      "de_nombre": "C",
+      "de_cargo": "D",
+      "descripcion": "Prueba"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "155db22734eaecd3817bdf80f1ec89091777ed7e"
+  },
+  {
+    "folio_reporte": "REP-2026-002",
+    "created_at": "2026-05-19T18:05:45.088605+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria “A”",
+      "descripcion": "El presente documento expone la gestión predial del estatus actual sobre la Liberación De Derecho De Vía del proyecto (nombre) en referencia al segmento (número). Se informa el análisis de predios identificados y  pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "b3f40f97aea48ddd41d69d362c69c831073b471d"
+  },
+  {
+    "folio_reporte": "REP-2026-003",
+    "created_at": "2026-05-19T18:05:52.982865+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria “A”",
+      "descripcion": "El presente documento expone la gestión predial del estatus actual sobre la Liberación De Derecho De Vía del proyecto (nombre) en referencia al segmento (número). Se informa el análisis de predios identificados y  pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "18c29181d7b0bd6c8b8ecd99d7080bcf52a81312"
+  },
+  {
+    "folio_reporte": "REP-2026-004",
+    "created_at": "2026-05-19T18:12:35.291024+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "S1",
+      "para_nombre": "A",
+      "para_cargo": "B",
+      "de_nombre": "C",
+      "de_cargo": "D",
+      "descripcion": "Prueba"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "20fc58a75d4d2f0247171c29736a32061b238bd8"
+  },
+  {
+    "folio_reporte": "REP-2026-005",
+    "created_at": "2026-05-19T18:14:17.096584+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "S1",
+      "para_nombre": "A",
+      "para_cargo": "B",
+      "de_nombre": "C",
+      "de_cargo": "D",
+      "descripcion": "Prueba"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "0c07ab95600ab2278a180ac677b7e57adc26c226"
+  },
+  {
+    "folio_reporte": "REP-2026-006",
+    "created_at": "2026-05-19T18:22:50.274533+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "S1",
+      "para_nombre": "A",
+      "para_cargo": "B",
+      "de_nombre": "C",
+      "de_cargo": "D",
+      "descripcion": "Prueba membrete"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "761d95d64e55f0d2edf5c7b2559c9b10813cf1b7"
+  },
+  {
+    "folio_reporte": "REP-2026-007",
+    "created_at": "2026-05-19T18:37:56.218561+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria “A”",
+      "descripcion": "El presente documento expone la gestión predial del estatus actual sobre la Liberación De Derecho De Vía del proyecto (nombre) en referencia al segmento (número). Se informa el análisis de predios identificados y  pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "110ad46bfa92629efe3d56ef3b70fbb18cce8005"
+  },
+  {
+    "folio_reporte": "REP-2026-008",
+    "created_at": "2026-05-19T18:38:14.568036+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria “A”",
+      "descripcion": "El presente documento expone la gestión predial del estatus actual sobre la Liberación De Derecho De Vía del proyecto (nombre) en referencia al segmento (número). Se informa el análisis de predios identificados y  pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "33dc7e02bab0c8c7e1645faa99fbea8520cda2fb"
+  },
+  {
+    "folio_reporte": "REP-2026-009",
+    "created_at": "2026-05-19T18:40:40.369399+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria “A”",
+      "descripcion": "El presente documento expone la gestión predial del estatus actual sobre la Liberación De Derecho De Vía del proyecto (nombre) en referencia al segmento (número). Se informa el análisis de predios identificados y  pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "322f80870b3282f8094fa885fd0cb919b2a32acf"
+  },
+  {
+    "folio_reporte": "REP-2026-010",
+    "created_at": "2026-05-19T18:42:55.753089+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "dgbbgbw",
+      "para_cargo": "cbdbbdbd",
+      "de_nombre": "thhhhhth",
+      "de_cargo": "ttttt",
+      "descripcion": "El presente documento expone la gestión predial del estatus actual sobre la Liberación De Derecho De Vía del proyecto (nombre) en referencia al segmento (número). Se informa el análisis de predios identificados y  pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "45efc905863e9e5b964db5fe191ff20837af0825"
+  },
+  {
+    "folio_reporte": "REP-2026-011",
+    "created_at": "2026-05-19T18:50:00.278838+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "S1",
+      "para_nombre": "A",
+      "para_cargo": "B",
+      "de_nombre": "C",
+      "de_cargo": "D",
+      "descripcion": "Prueba membrete real"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "56810aeb55dc694e2ae7835cc00493cb0d2a9aaa"
+  },
+  {
+    "folio_reporte": "REP-2026-012",
+    "created_at": "2026-05-19T18:52:43.900226+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "15",
+      "para_nombre": "fggrtr",
+      "para_cargo": "rgheg",
+      "de_nombre": "retehw",
+      "de_cargo": "grtgrst",
+      "descripcion": "El presente documento expone la gestión predial del estatus actual sobre la Liberación De Derecho De Vía del proyecto (nombre) en referencia al segmento (número). Se informa el análisis de predios identificados y  pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "bfa3c2ba5f6a954f346a19b8e0e6f05ae3a21cfc"
+  },
+  {
+    "folio_reporte": "REP-2026-013",
+    "created_at": "2026-05-19T19:01:44.548611+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "S1",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "descripcion": "Texto de prueba"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "b2a3627f027311b142ff920b91ee91b5f71b1dc7"
+  },
+  {
+    "folio_reporte": "REP-2026-014",
+    "created_at": "2026-05-19T19:04:19.623271+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "16",
+      "para_nombre": "gjhsdfie",
+      "para_cargo": "cnionfeqf",
+      "de_nombre": "cniwnonor",
+      "de_cargo": "c infqnfoimcr",
+      "descripcion": "bcincin cnoermomec cnqoirao rnvenvoei bcincin cnoermomec cnqoirao rnvenvoeibcincin cnoermomec cnqoirao rnvenvoeibcincin cnoermomec cnqoirao rnvenvoeibcincin cnoermomec cnqoirao rnvenvoeibcincin cnoermomec cnqoirao rnvenvoeibcincin cnoermomec cnqoirao rnvenvoeibcincin cnoermomec cnqoirao rnvenvoei"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "a44fa6293448cf99ce8bbb0a059c6a7dd02b9cd0"
+  },
+  {
+    "folio_reporte": "REP-2026-015",
+    "created_at": "2026-05-19T19:28:26.829650+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "Tramo 1",
+      "segmento": "Seg-01",
+      "para_nombre": "Ing. Pavel López",
+      "para_cargo": "Titular de la Unidad",
+      "de_nombre": "Ing. Carlos Sandoval",
+      "de_cargo": "Director Ferroviario A",
+      "descripcion": "Prueba layout"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "be23fa6c22fbca99ba3012554d11e02b6d2ab8a3"
+  },
+  {
+    "folio_reporte": "REP-2026-016",
+    "created_at": "2026-05-19T19:30:54.151003+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "16",
+      "para_nombre": "hvihnloigor. viuv",
+      "para_cargo": "vbiuehru v oihjrf oauhr iuev",
+      "de_nombre": "chiuhge. vieau hrvae",
+      "de_cargo": "vbreiuhie vshrt",
+      "descripcion": "vbieotu voje s. u0er vd vk ivheh rvev vh ieuhe v she vi vihseiv huehr viuh ieuhv. vieiruhvguv. uycgsychc chishdch"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "d2fb609f41a3e03760eef6150ce60585f4ad5e2e"
+  },
+  {
+    "folio_reporte": "REP-2026-017",
+    "created_at": "2026-05-19T19:54:30.698938+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria A",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Prueba de formato"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "dd2beb47a7d6c7500dc623152de1533949f2212d"
+  },
+  {
+    "folio_reporte": "REP-2026-018",
+    "created_at": "2026-05-19T19:59:27.340901+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria A",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Prueba de formato"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "12bafe9baae536c1bfc9a8547381ecfda26577a8"
+  },
+  {
+    "folio_reporte": "REP-2026-019",
+    "created_at": "2026-05-19T20:08:16.432474+00:00",
+    "datos_formulario": {
+      "fecha": "2023-11-20",
+      "proyecto": "TEST PROYECTO",
+      "segmento": "TEST SEGMENTO",
+      "para_nombre": "JUAN PEREZ",
+      "para_cargo": "DIRECTOR",
+      "de_nombre": "MARIA LOPEZ",
+      "de_cargo": "COORDINADORA",
+      "elaboro_reviso": "FIRMA PERSONALIZADA",
+      "descripcion": "REPORTE DE PRUEBA"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "c222fc9022279575cc289cde97fd4bbf039b48ad"
+  },
+  {
+    "folio_reporte": "REP-2026-020",
+    "created_at": "2026-05-19T20:08:16.505182+00:00",
+    "datos_formulario": {
+      "fecha": "2023-11-20",
+      "proyecto": "TEST PROYECTO",
+      "segmento": "TEST SEGMENTO",
+      "para_nombre": "JUAN PEREZ",
+      "para_cargo": "DIRECTOR",
+      "de_nombre": "MARIA LOPEZ",
+      "de_cargo": "COORDINADORA",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "REPORTE DE PRUEBA"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "c36687cd079b4e09ec6d3c36882bd6c32dd9e78a"
+  },
+  {
+    "folio_reporte": "REP-2026-021",
+    "created_at": "2026-05-19T20:09:40.526826+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "16",
+      "para_nombre": "dhqwhud hqiex",
+      "para_cargo": "xhe8xu2x",
+      "de_nombre": "x2ebiueb",
+      "de_cargo": "xenin1x",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "xii3undviu24v"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "57f73c259e9b55be267855259a476a23cbf83034"
+  },
+  {
+    "folio_reporte": "REP-2026-022",
+    "created_at": "2026-05-19T20:15:20.428846+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria A",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Prueba espaciado"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "21dd871b1e3e98e24a384cec69b1bcb4d95fd87a"
+  },
+  {
+    "folio_reporte": "REP-2026-023",
+    "created_at": "2026-05-19T20:20:15.096821+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad",
+      "de_nombre": "Ing. Carlos Sandoval",
+      "de_cargo": "Director Ferroviario A",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Se informa el análisis de predios identificados y pk efectivos contrastando el progreso de regularización legal y disponibilidad física frente a las metas del proyecto."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "e3c2afdc80dbba988bd9751fba4f3c8e7936b336"
+  },
+  {
+    "folio_reporte": "REP-2026-024",
+    "created_at": "2026-05-19T20:22:43.603892+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "16",
+      "para_nombre": "DAYANA",
+      "para_cargo": "CUALQUIERA",
+      "de_nombre": "JORGE",
+      "de_cargo": "CUALQUIERA",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Para conocie¿miento de usted"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "c210452bc897f994133467c8564baa058ceab972"
+  },
+  {
+    "folio_reporte": "REP-2026-025",
+    "created_at": "2026-05-19T22:58:05.787840+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "16",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "SE ENVIA PARA SU REVISION"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "43fe46a48511e080953f559911aff2d88159c5f7"
+  },
+  {
+    "folio_reporte": "REP-2026-026",
+    "created_at": "2026-05-19T23:01:53.800230+00:00",
+    "datos_formulario": {
+      "fecha": "19/05/2026",
+      "proyecto": "TSNL",
+      "segmento": "16",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Se envia para su revision. gracias"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "b54440627b26339f1d321b9881b501f8e2ccab78"
+  },
+  {
+    "folio_reporte": "REP-2026-027",
+    "created_at": "2026-06-04T19:27:45.232133+00:00",
+    "datos_formulario": {
+      "fecha": "04/06/2026",
+      "proyecto": "TSNL",
+      "segmento": "S13",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "prueba"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "b7eff63f0ff9931095a60b3acbbebceaf55ec81c"
+  },
+  {
+    "folio_reporte": "REP-2026-028",
+    "created_at": "2026-06-04T19:54:30.902688+00:00",
+    "datos_formulario": {
+      "fecha": "04/06/2026",
+      "proyecto": "TSNL",
+      "segmento": "S16",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "para su conocimento lakhsdiqdnoccuhjeq jnciuec cqiuncnc"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "efd25580419c292748cd8970b30fa745ebb0bdfa"
+  },
+  {
+    "folio_reporte": "REP-2026-029",
+    "created_at": "2026-06-04T19:54:40.808088+00:00",
+    "datos_formulario": {
+      "fecha": "04/06/2026",
+      "proyecto": "TSNL",
+      "segmento": "S16",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "para su conocimento lakhsdiqdnoccuhjeq jnciuec cqiuncnc"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "ffc54878214a1f360ce28266679f833de36179dd"
+  },
+  {
+    "folio_reporte": "REP-2026-030",
+    "created_at": "2026-06-04T19:59:52.994013+00:00",
+    "datos_formulario": {
+      "fecha": "04/06/2026",
+      "proyecto": "TSNL",
+      "segmento": "S17",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Se le informa del avance actual, un cordial saludo."
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "16519f5cd063b667c4b2ebbcbe0f9576b7b79b7d"
+  },
+  {
+    "folio_reporte": "REP-2026-031",
+    "created_at": "2026-06-04T20:17:31.416329+00:00",
+    "datos_formulario": {
+      "fecha": "04/06/2026",
+      "proyecto": "TSNL",
+      "segmento": "S17",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Revisar la informacion y el avance actual"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      }
+    },
+    "payload_hash": "9a30222aab0a40f03e565ea0bc9917b0f7b156b1"
+  },
+  {
+    "folio_reporte": "REP-2026-032",
+    "created_at": "2026-06-04T23:03:55.774937+00:00",
+    "datos_formulario": {
+      "fecha": "04/06/2026",
+      "proyecto": "TSNL",
+      "segmento": "S13",
+      "para_nombre": "A",
+      "para_cargo": "B",
+      "de_nombre": "C",
+      "de_cargo": "D",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "Prueba de formato"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "predios_liberados_seg": 0,
+      "predios_no_liberados_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "avance_tipo_propiedad_segmento": {
+        "privada": {
+          "total": 0,
+          "liberados": 0,
+          "no_liberados": 0,
+          "avance": 0.0
+        },
+        "social_dominio": {
+          "total": 0,
+          "liberados": 0,
+          "no_liberados": 0,
+          "avance": 0.0
+        }
+      }
+    },
+    "payload_hash": "89966a9c42ba74b51d2e80f9104e76da15d9f4f4"
+  },
+  {
+    "folio_reporte": "REP-2026-033",
+    "created_at": "2026-06-04T23:11:08.330060+00:00",
+    "datos_formulario": {
+      "fecha": "04/06/2026",
+      "proyecto": "TSNL",
+      "segmento": "S17",
+      "para_nombre": "Ing. Pavel López Medina",
+      "para_cargo": "Titular de la Unidad de Verificación, Seguridad y Registro",
+      "de_nombre": "Ing. Carlos Alberto Sandoval Manrique de Lara",
+      "de_cargo": "Director de Verificación Ferroviaria \"A\"",
+      "elaboro_reviso": "BDVV/RSR",
+      "descripcion": "vrv vrf kaj ckosdoii2mkxslk oamsx elaisdj xoaox xpakmxqo xsmlak. pox. wlakjs x lkpx al dal xpx qx xla xm"
+    },
+    "datos_automatizados": {
+      "predios_totales_proy": 0,
+      "predios_totales_seg": 0,
+      "predios_liberados_seg": 0,
+      "predios_no_liberados_seg": 0,
+      "km_efectivos": 0,
+      "km_liberados": 0,
+      "superficie_liberada_m2": 0,
+      "avance_lddv_doc": 0.0,
+      "avance_lddv_sindoc": 100.0,
+      "grafica_tipos": {},
+      "graficas_privada": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "graficas_social": {
+        "total_propietarios": 0,
+        "total_predios": 0,
+        "levantamiento_si": 0,
+        "acercamiento_si": 0,
+        "negociacion_si": 0
+      },
+      "avance_tipo_propiedad_segmento": {
+        "privada": {
+          "total": 0,
+          "liberados": 0,
+          "no_liberados": 0,
+          "avance": 0.0
+        },
+        "social_dominio": {
+          "total": 0,
+          "liberados": 0,
+          "no_liberados": 0,
+          "avance": 0.0
+        }
+      }
+    },
+    "payload_hash": "130565d39c34514fd721dd1d03c056184300cc25"
+  }
+]

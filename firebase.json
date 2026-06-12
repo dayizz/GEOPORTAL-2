@@ -1,0 +1,11 @@
+{
+  "hosting": {
+    "site": "geoportal-gestion",
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}
