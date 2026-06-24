@@ -94,9 +94,13 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     }
   }
 
+  // Tamaño máximo de archivo: 2 MB = 2,097,152 bytes
+  static const int _maxFileSizeBytes = 2 * 1024 * 1024;
+
   Future<void> _seleccionarArchivo() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
+      type: FileType.custom,
+      allowedExtensions: ['geojson', 'json', 'xlsx', 'xlsl'],
       withData: true,
     );
 
@@ -113,6 +117,23 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         SnackBar(
           content: Text(
             'Archivo no soportado. Usa .geojson, .json, .xlsx o .xlsl',
+            style: const TextStyle(color: Colors.white),
+          ),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
+
+    // Validar tamaño de archivo (máximo 2 MB)
+    final fileSize = file.size;
+    if (fileSize > _maxFileSizeBytes) {
+      final sizeMB = (fileSize / (1024 * 1024)).toStringAsFixed(2);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'El archivo es muy grande (${sizeMB} MB). Máximo permitido: 2 MB',
             style: const TextStyle(color: Colors.white),
           ),
           backgroundColor: AppColors.danger,
@@ -146,6 +167,27 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         if (!mounted) return;
         _mostrarSnackBar('No se pudo leer el archivo seleccionado.', exito: false);
         return;
+      }
+
+      // Mostrar indicador de progreso para archivos grandes
+      if (fileSize > 500 * 1024) { // Mayor a 500KB
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                Text('Cargando archivo...'),
+              ],
+            ),
+            duration: Duration(seconds: 10),
+          ),
+        );
       }
 
       if (ext == 'xlsx' || ext == 'xlsl') {
@@ -1010,7 +1052,7 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
                     Text(
                       _archivoSeleccionado != null
                           ? 'Toca para cambiar el archivo'
-                            : 'Formatos: .geojson  .json  .xlsx  .xlsl',
+                            : 'Formatos: .geojson  .json  .xlsx  .xlsl · Máximo 2 MB',
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.textLight),
                     ),
@@ -1393,43 +1435,78 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
     if (isBusy)
       Positioned.fill(
         child: Container(
-          color: Colors.black.withValues(alpha: 0.22),
-          alignment: Alignment.center,
-          child: Container(
-            width: 260,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x22000000),
-                  blurRadius: 12,
-                  offset: Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _sincronizando
-                      ? 'Inyectando y actualizando datos...'
-                      : 'Leyendo archivo...',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
+          color: Colors.black.withValues(alpha: 0.3),
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              margin: const EdgeInsets.symmetric(horizontal: 40),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 20,
+                    offset: Offset(0, 10),
                   ),
-                ),
-              ],
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.cloud_upload_outlined,
+                    size: 48,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _sincronizando
+                        ? 'Guardando predios...'
+                        : 'Procesando archivo...',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Builder(builder: (context) {
+                    final progreso = progresoImportacion;
+                    final porcentaje = progreso.porcentaje;
+                    final porcentajeInt = (porcentaje * 100).round();
+                    return Column(
+                      children: [
+                        SizedBox(
+                          width: 200,
+                          child: LinearProgressIndicator(
+                            value: porcentaje > 0 ? porcentaje : null,
+                            backgroundColor: const Color(0xFFE0E0E0),
+                            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '$porcentajeInt%',
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${progreso.procesados} / ${progreso.total}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textLight,
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
+                ],
+              ),
             ),
           ),
         ),
@@ -1552,16 +1629,59 @@ class _CargaArchivoScreenState extends ConsumerState<CargaArchivoScreen> {
         if (busy)
           Positioned.fill(
             child: Container(
-              color: Colors.black.withOpacity(0.2),
-              child: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text('Actualizando, por favor espera...',
-                        style: TextStyle(fontSize: 16, color: Colors.black)),
-                  ],
+              color: Colors.black.withOpacity(0.3),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(24),
+                  margin: const EdgeInsets.symmetric(horizontal: 40),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x33000000),
+                        blurRadius: 20,
+                        offset: Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.cloud_upload_outlined,
+                        size: 48,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _sincronizando ? 'Guardando predios...' : 'Procesando archivo...',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: 200,
+                        child: LinearProgressIndicator(
+                          backgroundColor: const Color(0xFFE0E0E0),
+                          valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _sincronizando
+                            ? 'Esto puede tomar unos segundos'
+                            : 'Por favor espera...',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textLight,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

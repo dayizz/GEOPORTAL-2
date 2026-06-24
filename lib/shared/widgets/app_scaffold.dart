@@ -21,9 +21,12 @@ class AppScaffold extends StatelessWidget {
 
   static const _navItems = [
     (icon: Icons.map_outlined, label: AppStrings.mapa, route: '/mapa'),
-    (icon: Icons.analytics_outlined, label: 'Balance', route: '/reportes'),
+    (icon: Icons.analytics_outlined, label: 'Balance', route: '/balance'),
     (icon: Icons.upload_file_outlined, label: 'Archivos', route: '/carga'),
     (icon: Icons.folder_outlined, label: 'Gestion', route: '/tabla'),
+    (icon: Icons.receipt_long_outlined, label: 'Reportes', route: '/reportes'),
+    (icon: Icons.person_outlined, label: 'Perfil', route: '/perfil'),
+    (icon: Icons.account_tree_outlined, label: 'Estructura', route: '/estructura'),
   ];
 
   @override

@@ -195,6 +195,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 if (v.length < 6) return 'Mínimo 6 caracteres';
                                 return null;
                               },
+                              onFieldSubmitted: (_) => _submit(),
                             ),
                             const SizedBox(height: 24),
                             ElevatedButton(

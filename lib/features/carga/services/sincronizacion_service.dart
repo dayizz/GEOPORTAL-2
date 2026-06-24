@@ -70,10 +70,10 @@ class _FeatureSyncOutcome {
 class SincronizacionService {
   final PrediosRepository _prediosRepo;
   final PropietariosRepository _propietariosRepo;
-  static const int _defaultSyncConcurrency = 6;
-  static const int _maxSyncConcurrency = 12;
+  static const int _defaultSyncConcurrency = 25;
+  static const int _maxSyncConcurrency = 30;
   static const int _maxRetryAttempts = 3;
-  static const int _baseRetryDelayMs = 250;
+  static const int _baseRetryDelayMs = 300;
 
   SincronizacionService(this._prediosRepo, this._propietariosRepo);
 
@@ -129,6 +129,8 @@ class SincronizacionService {
     enriched['_ejido'] = predioMap['ejido'];
     enriched['_kmInicio'] = predioMap['km_inicio'];
     enriched['_kmFin'] = predioMap['km_fin'];
+    enriched['_kmLineales'] = predioMap['km_lineales'];
+    enriched['_kmEfectivos'] = predioMap['km_efectivos'];
     enriched['_proyecto'] = predioMap['proyecto'];
     enriched['_sincronizado'] = true;
     enriched['_syncStatus'] = 'linked';
@@ -152,10 +154,17 @@ class SincronizacionService {
   }
 
   /// Busca el primer valor no nulo/vacío de una lista de claves en [props].
+  /// Solo ignora valores realmente vacíos o nulos.
+  static final _invalidValues = {
+    'null', 'nulo', 'undefined', 'none', '',
+  };
+  
   String? _pick(Map<String, dynamic> props, List<String> keys) {
     for (final k in keys) {
       final v = props[k]?.toString().trim();
-      if (v != null && v.isNotEmpty && v != 'null') return v;
+      if (v != null && v.isNotEmpty && !_invalidValues.contains(v.toLowerCase())) {
+        return v;
+      }
     }
     return null;
   }
@@ -219,26 +228,11 @@ class SincronizacionService {
   String _normalizeKey(String input) {
     var s = input.toLowerCase();
     const replacements = {
-      'á': 'a',
-      'à': 'a',
-      'ä': 'a',
-      'â': 'a',
-      'é': 'e',
-      'è': 'e',
-      'ë': 'e',
-      'ê': 'e',
-      'í': 'i',
-      'ì': 'i',
-      'ï': 'i',
-      'î': 'i',
-      'ó': 'o',
-      'ò': 'o',
-      'ö': 'o',
-      'ô': 'o',
-      'ú': 'u',
-      'ù': 'u',
-      'ü': 'u',
-      'û': 'u',
+      'á': 'a', 'à': 'a', 'ä': 'a', 'â': 'a',
+      'é': 'e', 'è': 'e', 'ë': 'e', 'ê': 'e',
+      'í': 'i', 'ì': 'i', 'ï': 'i', 'î': 'i',
+      'ó': 'o', 'ò': 'o', 'ö': 'o', 'ô': 'o',
+      'ú': 'u', 'ù': 'u', 'ü': 'u', 'û': 'u',
       'ñ': 'n',
     };
     replacements.forEach((k, v) => s = s.replaceAll(k, v));
@@ -268,18 +262,9 @@ class SincronizacionService {
   bool _isRetryableError(Object error) {
     final msg = error.toString().toLowerCase();
     const retryableHints = [
-      'timeout',
-      'timed out',
-      'socket',
-      'network',
-      'connection',
-      '429',
-      '500',
-      '502',
-      '503',
-      '504',
-      'sheets get fallo',
-      'sheets post fallo',
+      'timeout', 'timed out', 'socket', 'network', 'connection',
+      'failed to fetch', 'fetch failed', 'could not connect', 'connection refused',
+      '429', '500', '502', '503', '504', 'sheets get fallo', 'sheets post fallo',
     ];
     return retryableHints.any(msg.contains);
   }
@@ -295,58 +280,76 @@ class SincronizacionService {
   Map<String, dynamic> _buildNuevoPredioData(
     String claveCatastral,
     Map<String, dynamic> props,
-    Map<String, dynamic>? geometry,
-  ) {
-      final superficie = _toDouble(
-        props['superficie'] ?? props['SUPERFICIE'] ??
-        props['area'] ?? props['AREA'] ?? props['shape_area'] ??
-        props['SHAPE_AREA'] ?? props['area_ha'] ?? props['area_m2'],
-      ) ??
-      0;
-      final kmInicio = _toDouble(
-        props['km_inicio'] ?? props['KM_INICIO'] ??
-        props['cadenamiento_inicial'] ?? props['cad_ini'] ?? props['km_i'],
-      ) ??
-      0;
-      final kmFin = _toDouble(
-        props['km_fin'] ?? props['KM_FIN'] ??
-        props['cadenamiento_final'] ?? props['cad_fin'] ?? props['km_f'],
-      ) ??
-      0;
-      final kmLineales = _toDouble(
-        props['km_lineales'] ?? props['KM_LINEALES'] ??
-        props['longitud_km'] ?? props['longitud'],
-      ) ??
-      0;
-      final kmEfectivos = _toDouble(
-        props['km_efectivos'] ?? props['KM_EFECTIVOS'],
-      ) ??
-      0;
-      final valorCatastral = _toDouble(
-        props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ??
-        props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO'],
-      ) ??
-      0;
+    Map<String, dynamic>? geometry, {
+    Map<String, dynamic>? propsOriginal,
+  }) {
+    // Extraer superficie con más aliases
+    final superficie = _toDouble(
+      props['superficie'] ?? props['SUPERFICIE'] ??
+      props['area'] ?? props['AREA'] ?? props['shape_area'] ??
+      props['SHAPE_AREA'] ?? props['area_ha'] ?? props['area_m2'] ??
+      props['superficie_m2'] ?? props['m2'] ?? props['Area'] ??
+      (propsOriginal != null ? propsOriginal['m2'] : null),
+    ) ?? 0;
+
+    // Extraer km_inicio con más aliases
+    final kmInicio = _toDouble(
+      props['km_inicio'] ?? props['KM_INICIO'] ??
+      props['cadenamiento_inicial'] ?? props['cad_ini'] ?? props['km_i'] ??
+      props['km_ini'] ?? props['km0'] ?? props['cadenamiento_i'] ??
+      (propsOriginal != null ? propsOriginal['km_inicio'] : null) ??
+      (propsOriginal != null ? propsOriginal['KM_INICIO'] : null),
+    ) ?? 0;
+
+    // Extraer km_fin con más aliases
+    final kmFin = _toDouble(
+      props['km_fin'] ?? props['KM_FIN'] ??
+      props['cadenamiento_final'] ?? props['cad_fin'] ?? props['km_f'] ??
+      props['km1'] ?? props['cadenamiento_f'] ?? props['cadenamiento_1'] ??
+      (propsOriginal != null ? propsOriginal['km_fin'] : null) ??
+      (propsOriginal != null ? propsOriginal['KM_FIN'] : null),
+    ) ?? 0;
+
+    final kmLineales = _toDouble(
+      props['km_lineales'] ?? props['KM_LINEALES'] ??
+      props['longitud_km'] ?? props['longitud'] ?? props['km'],
+    ) ?? 0;
+
+    // Extraer km_efectivos con más aliases
+    final kmEfectivos = _toDouble(
+      props['km_efectivos'] ?? props['KM_EFECTIVOS'] ??
+      props['km_efectivo'] ?? props['km_e'] ??
+      (propsOriginal != null ? propsOriginal['km_efectivos'] : null) ??
+      (propsOriginal != null ? propsOriginal['KM_EFECTIVOS'] : null),
+    ) ?? 0;
+
+    final valorCatastral = _toDouble(
+      props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ??
+      props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO'],
+    ) ?? 0;
 
     final data = <String, dynamic>{
       // ── Identificación ──────────────────────────────────────────────────
       'clave_catastral': claveCatastral,
 
       // ── Clasificación ───────────────────────────────────────────────────
-      'tramo': _pick(props, ['tramo', 'TRAMO', 'tramo_vial', 'seccion']) ?? 'T1',
+      'tramo': _pick(props, [
+        'tramo', 'TRAMO', 'tramo_vial', 'seccion',
+        'frente', 'FRENTE', 'segmento', 'SEGMENTO',
+        't_f_s', 'T_F_S', 'tipofs', 'TIPO_FS',
+      ]) ?? 'T1',
       'tipo_propiedad': _pick(props, [
-            'tipo_propiedad', 'tipopropiedad', 'TIPO_PROPIEDAD',
-            'tipo', 'TIPO', 'regimen', 'REGIMEN',
-          ]) ?? 'PRIVADA',
+        'tipo_propiedad', 'tipopropiedad', 'TIPO_PROPIEDAD',
+        'tipo', 'TIPO', 'regimen', 'REGIMEN',
+      ]) ?? 'PRIVADA',
       'ejido': _pick(props, [
         'ejido', 'nom_ejido', 'nombre_ejido', 'NOM_EJIDO', 'EJIDO',
         'comunidad', 'localidad',
       ]),
       'proyecto': _resolveProyecto(props),
       'uso_suelo': _pick(props, [
-            'uso_suelo', 'USO_SUELO', 'uso', 'USO', 'land_use', 'LAND_USE',
-          ]) ??
-          'Otro',
+        'uso_suelo', 'USO_SUELO', 'uso', 'USO', 'land_use', 'LAND_USE',
+      ]) ?? 'Otro',
       'zona': _pick(props, ['zona', 'ZONA', 'sector', 'SECTOR', 'region', 'REGION']),
       'valor_catastral': valorCatastral,
       'descripcion': _pick(props, [
@@ -354,8 +357,14 @@ class SincronizacionService {
       ]),
       'direccion': _pick(props, ['direccion', 'DIRECCION', 'domicilio', 'DOMICILIO', 'calle', 'CALLE']),
       'colonia': _pick(props, ['colonia', 'COLONIA', 'barrio', 'BARRIO']),
-      'municipio': _pick(props, ['municipio', 'MUNICIPIO', 'mun', 'MUN']),
-      'estado': _pick(props, ['estado', 'ESTADO', 'entidad', 'ENTIDAD']),
+      'municipio': _pick(props, [
+        'municipio', 'MUNICIPIO', 'mun', 'MUN',
+        'localidad', 'LOCALIDAD', 'ciudad', 'CIUDAD',
+      ]),
+      'estado': _pick(props, [
+        'estado', 'ESTADO', 'entidad', 'ENTIDAD',
+        'state', 'STATE', 'nombre_entidad', 'NOMBRE_ENTIDAD',
+      ]),
       'codigo_postal': _pick(props, ['codigo_postal', 'CODIGO_POSTAL', 'cp', 'CP']),
       'imagen_url': _pick(props, ['imagen_url', 'IMAGEN_URL', 'foto_url', 'FOTO_URL', 'image_url', 'IMAGE_URL']),
 
@@ -387,14 +396,28 @@ class SincronizacionService {
       'poligono_insertado': geometry != null,
 
       // ── Gestión (estado inicial) ─────────────────────────────────────────
-      'cop': props['cop'] as bool? ?? false,
-      'identificacion': props['identificacion'] as bool? ?? false,
-      'levantamiento': props['levantamiento'] as bool? ?? false,
-      'negociacion': props['negociacion'] as bool? ?? false,
+      // Convierte valores booleanos o strings a boolean
+      'cop': _toBool(props['cop']),
+      'identificacion': _toBool(props['identificacion']),
+      'levantamiento': _toBool(props['levantamiento']),
+      'negociacion': _toBool(props['negociacion']),
     };
 
     // Eliminar claves con valor null para no pisar datos existentes
     data.removeWhere((k, v) => v == null);
+    
+    // Incluir TODAS las propiedades originales del GeoJSON que no estén ya en data
+    if (propsOriginal != null) {
+      for (final entry in propsOriginal.entries) {
+        final key = entry.key;
+        if (!data.containsKey(key) && entry.value != null) {
+          final valueStr = entry.value.toString().trim();
+          if (valueStr.isNotEmpty && valueStr.toLowerCase() != 'null') {
+            data[key] = entry.value;
+          }
+        }
+      }
+    }
     return data;
   }
 
@@ -446,8 +469,28 @@ class SincronizacionService {
     return null;
   }
 
+  /// Convierte valores a boolean para campos de gestión
+  bool _toBool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    if (v is String) {
+      final upper = v.toUpperCase().trim();
+      if (upper == 'SI' || upper == 'YES' || upper == 'S' || upper == 'Y' || 
+          upper == 'TRUE' || upper == '1' || upper == 'X' ||
+          upper == 'COMPLETADO' || upper == 'COMPLETE' || 
+          upper == 'LIBERADO' || upper == 'LIBERADA' ||
+          upper == 'IDENTIFICADO' || upper == 'LEVANTADO' || upper == 'NEGOCIADO') {
+        return true;
+      }
+      if (upper == 'NO' || upper == 'FALSE' || upper == '0' || upper == '-' || upper.isEmpty) {
+        return false;
+      }
+    }
+    return false;
+  }
+
   /// Construye los campos de Gestión para ACTUALIZAR un predio existente.
-  /// Solo pisa un campo si está vacío en la BD y el GeoJSON lo aporta.
   Map<String, dynamic> _buildGestionUpdateData(
     Map<String, dynamic> props,
     Map<String, dynamic>? geometry,
@@ -471,20 +514,26 @@ class SincronizacionService {
       'propietario', 'PROPIETARIO', 'propietario_nombre', 'nombre_propietario',
       'nom_propietario', 'NOM_PROPIETARIO', 'titular', 'TITULAR', 'dueno', 'nombre',
     ]) ?? _pickPropietarioFlexible(props));
-    trySet('superficie',    _toDouble(props['superficie']    ?? props['SUPERFICIE']    ?? props['area'] ?? props['AREA'] ?? props['shape_area'] ?? props['SHAPE_AREA']));
+    trySet('superficie',    _toDouble(props['superficie']    ?? props['SUPERFICIE']    ?? props['area'] ?? props['AREA'] ?? props['shape_area'] ?? props['SHAPE_AREA'] ?? props['superficie_m2'] ?? props['m2'] ?? props['Area']));
     trySet('uso_suelo',     _pick(props, ['uso_suelo', 'USO_SUELO', 'uso', 'USO', 'land_use', 'LAND_USE']) ?? 'Otro');
     trySet('zona',          _pick(props, ['zona', 'ZONA', 'sector', 'SECTOR', 'region', 'REGION']));
     trySet('valor_catastral', _toDouble(props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ?? props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO']) ?? 0);
     trySet('descripcion',   _pick(props, ['descripcion', 'DESCRIPCION', 'description', 'DESCRIPTION']));
     trySet('direccion',     _pick(props, ['direccion', 'DIRECCION', 'domicilio', 'DOMICILIO', 'calle', 'CALLE']));
     trySet('colonia',       _pick(props, ['colonia', 'COLONIA', 'barrio', 'BARRIO']));
-    trySet('municipio',     _pick(props, ['municipio', 'MUNICIPIO', 'mun', 'MUN']));
-    trySet('estado',        _pick(props, ['estado', 'ESTADO', 'entidad', 'ENTIDAD']));
+    trySet('municipio',     _pick(props, ['municipio', 'MUNICIPIO', 'mun', 'MUN', 'localidad', 'ciudad']));
+    trySet('estado',        _pick(props, ['estado', 'ESTADO', 'entidad', 'ENTIDAD', 'state', 'nombre_entidad']));
     trySet('codigo_postal', _pick(props, ['codigo_postal', 'CODIGO_POSTAL', 'cp', 'CP']));
-    trySet('km_inicio',     _toDouble(props['km_inicio']     ?? props['KM_INICIO']     ?? props['cadenamiento_inicial'] ?? props['cad_ini'] ?? props['km_i']));
-    trySet('km_fin',        _toDouble(props['km_fin']        ?? props['KM_FIN']        ?? props['cadenamiento_final']   ?? props['cad_fin'] ?? props['km_f']));
-    trySet('km_lineales',   _toDouble(props['km_lineales']   ?? props['KM_LINEALES']   ?? props['longitud_km'] ?? props['longitud']));
-    trySet('km_efectivos',  _toDouble(props['km_efectivos']  ?? props['KM_EFECTIVOS']));
+    trySet('km_inicio',     _toDouble(props['km_inicio']     ?? props['KM_INICIO']     ?? props['cadenamiento_inicial'] ?? props['cad_ini'] ?? props['km_i'] ?? props['km_ini'] ?? props['km0'] ?? props['cadenamiento_i']));
+    trySet('km_fin',        _toDouble(props['km_fin']        ?? props['KM_FIN']        ?? props['cadenamiento_final']   ?? props['cad_fin'] ?? props['km_f'] ?? props['km1'] ?? props['cadenamiento_f'] ?? props['cadenamiento_1']));
+    trySet('km_lineales',   _toDouble(props['km_lineales']   ?? props['KM_LINEALES']   ?? props['longitud_km'] ?? props['longitud'] ?? props['km']));
+    trySet('km_efectivos',  _toDouble(props['km_efectivos']  ?? props['KM_EFECTIVOS']  ?? props['km_efectivo'] ?? props['km_e']));
+
+    // Campos booleanos de gestión
+    trySet('identificacion', _toBool(props['identificacion']));
+    trySet('levantamiento',   _toBool(props['levantamiento']));
+    trySet('negociacion',    _toBool(props['negociacion']));
+    trySet('cop',            _toBool(props['cop']));
 
     if (geometry != null && existente['geometry'] == null) {
       updates['geometry']           = geometry;
@@ -494,8 +543,6 @@ class SincronizacionService {
   }
 
   /// Procesa todos los features del archivo GeoJSON de forma asíncrona.
-  ///
-  /// [features]: Lista de features crudos del GeoJSON.
   Future<SincronizacionResultado> sincronizar(
     List<Map<String, dynamic>> features, {
     int concurrency = _defaultSyncConcurrency,
@@ -535,9 +582,7 @@ class SincronizacionService {
             onProgress?.call(procesados, features.length);
 
             for (final msg in outcome.mensajesError) {
-              if (mensajesError.length >= 5) {
-                break;
-              }
+              if (mensajesError.length >= 5) break;
               mensajesError.add(msg);
             }
           },
@@ -639,20 +684,29 @@ class SincronizacionService {
           : null;
       final clave = _extractId(props);
 
-      if (clave != null) {
-        final claveNormalizada = clave.trim();
-        Map<String, dynamic>? existente;
+      // Siempre intentar procesar el feature, sin importar si tiene clave o no
+      String? claveNormalizada;
+      Map<String, dynamic>? existente;
 
+      if (clave != null && clave.trim().isNotEmpty) {
+        claveNormalizada = clave.trim();
+        
         if (predioByClaveCache.containsKey(claveNormalizada)) {
           existente = predioByClaveCache[claveNormalizada];
         } else {
-          existente = await _withRetry(
-            () => _prediosRepo.buscarPorClaveCatastral(claveNormalizada),
-            operationName: 'buscarPorClaveCatastral',
-          );
-          predioByClaveCache[claveNormalizada] = existente;
+          try {
+            existente = await _withRetry(
+              () => _prediosRepo.buscarPorClaveCatastral(claveNormalizada!),
+              operationName: 'buscarPorClaveCatastral',
+            );
+          } catch (_) {
+            // Si falla la búsqueda, continuar como si no existiera
+            existente = null;
+          }
+          predioByClaveCache[claveNormalizada!] = existente;
         }
 
+        // Si existe, actualizar
         if (existente != null) {
           var existenteActual = existente;
           final updateData = _buildGestionUpdateData(
@@ -674,7 +728,7 @@ class SincronizacionService {
               existenteActual = updated.toMap()
                 ..['id'] = updated.id
                 ..['propietarios'] = propietariosRaw;
-              predioByClaveCache[claveNormalizada] = existenteActual;
+              predioByClaveCache[claveNormalizada!] = existenteActual;
             } catch (_) {
               // Si falla el update, continuar con los datos existentes.
             }
@@ -698,9 +752,9 @@ class SincronizacionService {
         }
       }
 
-      final nuevaClave =
-          clave ?? 'IMP-${DateTime.now().microsecondsSinceEpoch}-$featureNumber';
-      final predioData = _buildNuevoPredioData(nuevaClave, props, geometry);
+      // Si no hay clave o no existe, crear nuevo registro
+      final nuevaClave = claveNormalizada ?? 'IMP-${DateTime.now().microsecondsSinceEpoch}-$featureNumber';
+      final predioData = _buildNuevoPredioData(nuevaClave, props, geometry, propsOriginal: propsOriginal);
 
       final nombreProp = predioData['propietario_nombre'] as String?;
       if (nombreProp != null && nombreProp.isNotEmpty) {

@@ -1,13 +1,17 @@
 import 'dart:convert';
+import 'dart:html' as html;
+import 'dart:io';
 import 'dart:math' as math;
-
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
-
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../auth/providers/demo_provider.dart';
@@ -21,18 +25,22 @@ import '../../predios/providers/proyectos_provider.dart';
 import '../../propietarios/data/propietarios_repository.dart';
 import '../../propietarios/providers/propietarios_provider.dart';
 import '../providers/mapa_provider.dart';
-
+import 'package:screenshot/screenshot.dart';
+import '../utils/screenshot_crop_controller.dart';
 class MapaScreen extends ConsumerStatefulWidget {
   const MapaScreen({super.key});
-
   @override
   ConsumerState<MapaScreen> createState() => _MapaScreenState();
 }
-
 class _MapaScreenState extends ConsumerState<MapaScreen> {
   final MapController _mapCtrl = MapController();
+  final GeoportalScreenshotController _screenshotCtrl = GeoportalScreenshotController();
+  final ScreenshotController _screenshotPackageCtrl = ScreenshotController();
+  bool _isSelectingRegion = false;
   Predio? _selectedPredio;
   bool _showCapturaModal = false;
+  bool _showCapturaPantalla = false;
+  bool _isCapturingScreen = false;
   bool _showLayersPanel = false;
   bool _showVisualizacionPanel = false;
   bool _isDrawing = false;
@@ -51,16 +59,28 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
   String? _tipoPropiedad;
   double _detectedAreaM2 = 0;
   bool _detectingUbicacion = false;
+  /// Área en m2 detectada del polígono importado
+  double? _importedAreaM2;
+  /// KM inicio detectado del polígono importado
+  String? _importedKmInicio;
+  /// KM fin detectado del polígono importado
+  String? _importedKmFin;
+  /// KM efectivos detectados del polígono importado
+  String? _importedKmEfectivos;
+  /// Observaciones detectadas del polígono importado
+  String? _importedObservaciones;
   /// Índice del feature importado actualmente seleccionado para captura.
   int? _importedFeatureIndex;
   int? _manualFeatureIndex;
   String? _manualSelectedPredioId;
   final TextEditingController _manualPredioSearchCtrl = TextEditingController();
   int? _lastImportedFeaturesIdentity;
-
+  /// Rotación actual del mapa en grados.
+  double _currentRotation = 0;
+  /// Si el panel de rotación está expandido.
+  bool _showRotationPanel = false;
   static const _defaultCenter = LatLng(20.72, -100.35);
   static const _defaultZoom = 10.0;
-
   // Memoización de polígonos importados (deben ser de instancia, no static locales)
   List<Map<String, dynamic>>? _lastImportedFeatures;
   MapaColorMode? _lastColorMode;
@@ -69,7 +89,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
   List<Predio>? _lastPredios;
   MapaColorMode? _lastColorModeVisual;
   List<_PredioVisualData>? _lastVisuals;
-
   @override
   void dispose() {
     _tramoCtrl.dispose();
@@ -81,7 +100,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     _manualPredioSearchCtrl.dispose();
     super.dispose();
   }
-
   @override
   Widget build(BuildContext context) {
     final prediosAsync = ref.watch(prediosMapaProvider);
@@ -89,7 +107,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     final baseLayer = ref.watch(mapaBaseLayerProvider);
     final colorMode = ref.watch(mapaColorModeProvider);
     final importedFeatures = ref.watch(importedFeaturesProvider);
-
     List<Polygon> importedPolygons;
     if (_lastImportedFeatures == importedFeatures && _lastColorMode == colorMode) {
       importedPolygons = _lastImportedPolygons ?? [];
@@ -99,13 +116,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       _lastColorMode = colorMode;
       _lastImportedPolygons = importedPolygons;
     }
-
     final importedMarkers = _buildImportedMarkers(
       features: importedFeatures,
       selectedFeatureIndex: _importedFeatureIndex,
     );
     _focusImportedIfNeeded(importedFeatures, importedPolygons);
-
     // Focus desde Gestión/Propietarios: fly-to al predio solicitado.
     final focusId = ref.watch(focusPredioIdProvider);
     if (focusId != null) {
@@ -142,7 +157,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         }
       }
     }
-
     // Solicitud desde Gestión: abrir modo de vinculación manual para un predio.
     final manualVincularPredioId = ref.watch(manualVincularPredioIdProvider);
     if (manualVincularPredioId != null) {
@@ -170,7 +184,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         });
       });
     }
-
     return AppScaffold(
       currentIndex: 0,
       title: 'Mapa LDDV',
@@ -198,12 +211,14 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                 options: MapOptions(
                   initialCenter: _defaultCenter,
                   initialZoom: _defaultZoom,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.none,
+                  ),
                   onTap: (_, point) {
                     // Predios guardados en DB
                     final tappedVisual = _findVisualAtPoint(point, visuals);
                     var shouldAutofillUbicacion = false;
                     int? importedIdxToOpen;
-
                     setState(() {
                       if (_isManualLinkMode) {
                         final currentImported = ref.read(importedFeaturesProvider);
@@ -223,7 +238,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                         }
                         return;
                       }
-
                       if (tappedVisual != null) {
                         _selectedPredio = tappedVisual.predio;
                         _importedFeatureIndex = null;
@@ -238,7 +252,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                           _isDrawing = false;
                           _detectedAreaM2 = _calculateAreaSquareMeters(_draftPoints);
                           shouldAutofillUbicacion = true;
-
                           // ── Pre-rellenar formulario con datos del predio seleccionado ──
                           final predio = tappedVisual.predio;
                           final nombrePropOwner = predio.propietario != null
@@ -269,7 +282,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                         }
                         return;
                       }
-
                       // Buscar en polígonos importados (naranja) cuando modo selección activo
                       if (_isDrawing) {
                         final currentImported = ref.read(importedFeaturesProvider);
@@ -280,10 +292,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                         // Toque fuera de cualquier polígono → no borrar draft, no hacer nada
                         return;
                       }
-
                       _selectedPredio = null;
                     });
-
                     // Abrir captura fuera del setState para evitar setState anidado
                     if (importedIdxToOpen != null) {
                       final currentImported = ref.read(importedFeaturesProvider);
@@ -294,7 +304,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                         );
                       }
                     }
-
                     if (shouldAutofillUbicacion) {
                       _autofillEstadoMunicipioDesdePoligono();
                     }
@@ -439,6 +448,30 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Material(
+                      color: Colors.white,
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () => setState(() {
+                          _showRotationPanel = !_showRotationPanel;
+                        }),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          alignment: Alignment.center,
+                          child: Icon(
+                            Icons.explore_outlined,
+                            size: 22,
+                            color: _showRotationPanel
+                                ? AppColors.primary
+                                : const Color(0xFF555555),
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
                 if (_showVisualizacionPanel) ...[
@@ -449,6 +482,10 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                   const SizedBox(height: 6),
                   _buildLayersPanel(colorMode, baseLayer),
                 ],
+                if (_showRotationPanel) ...[
+                  const SizedBox(height: 6),
+                  _buildRotationPanel(),
+                ],
               ],
             ),
           ),
@@ -457,7 +494,18 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
             left: 16,
             child: _buildCapturaToggleButton(),
           ),
-
+          // Botón de captura de pantalla
+          Positioned(
+            top: 60,
+            left: 16,
+            child: _buildCapturaPantallaButton(),
+          ),
+          // Rosa de los vientos con estrella de 8 puntas - parte inferior derecha del mapa
+          Positioned(
+            bottom: 24,
+            right: 16,
+            child: _buildCompassRose(),
+          ),
           if (_showCapturaModal)
             Positioned(
               top: 72,
@@ -511,14 +559,13 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     ),
   );
   }
-
   String _tileTemplate(MapaBaseLayer layer) {
     if (layer == MapaBaseLayer.satelital) {
-      return 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+      // Google Satellite Hybrid - incluye imágenes satelitales con etiquetas de calles y lugares
+      return 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
     }
     return 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   }
-
   List<_PredioVisualData> _buildVisualData(
     List<Predio> predios,
     MapaColorMode mode,
@@ -535,9 +582,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               borderStrokeWidth: 1.8,
             )
           : null;
-
       final markerPoint = _markerPoint(predio, rings);
-
       return _PredioVisualData(
         predio: predio,
         color: color,
@@ -547,13 +592,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       );
     }).toList();
   }
-
   _PredioVisualData? _findVisualAtPoint(LatLng point, List<_PredioVisualData> visuals) {
     for (final visual in visuals.reversed) {
       if (visual.rings.isEmpty) continue;
       final outerRing = visual.rings.first;
       if (!_pointInRing(point, outerRing)) continue;
-
       final insideHole = visual.rings.skip(1).any((ring) => _pointInRing(point, ring));
       if (!insideHole) {
         return visual;
@@ -561,17 +604,14 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return null;
   }
-
   bool _pointInRing(LatLng point, List<LatLng> ring) {
     if (ring.length < 3) return false;
-
     var inside = false;
     for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
       final xi = ring[i].longitude;
       final yi = ring[i].latitude;
       final xj = ring[j].longitude;
       final yj = ring[j].latitude;
-
       final intersects = ((yi > point.latitude) != (yj > point.latitude)) &&
           (point.longitude <
               (xj - xi) * (point.latitude - yi) / ((yj - yi) == 0 ? 0.0000001 : (yj - yi)) + xi);
@@ -581,29 +621,24 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return inside;
   }
-
   Color _predioColor(Predio predio, MapaColorMode mode) {
     if (mode == MapaColorMode.tipoPropiedad) {
       return AppColors.tipoPropiedadColor(predio.tipoPropiedad);
     }
-
     return _estatusColor(_predioEstatus(predio));
   }
-
   Color _draftPolygonColor(MapaColorMode mode) {
     if (mode == MapaColorMode.tipoPropiedad) {
       return AppColors.tipoPropiedadColor(_tipoPropiedad ?? 'Sin tipo');
     }
     return _estatusColor(_estatusPredio);
   }
-
   Color _savedPolygonColor(_SavedPolygon polygon, MapaColorMode mode) {
     if (mode == MapaColorMode.tipoPropiedad) {
       return AppColors.tipoPropiedadColor(polygon.tipoPropiedad ?? 'Sin tipo');
     }
     return _estatusColor(polygon.estatus);
   }
-
   String _predioEstatus(Predio predio) {
     if (predio.cop) return 'Liberado';
     if (predio.negociacion || predio.levantamiento || predio.identificacion) {
@@ -611,11 +646,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return 'Sin estatus';
   }
-
   bool _isLiberado(String? estatus) => estatus == 'Liberado';
-
   bool _isNoLiberado(String? estatus) => estatus == 'No liberado';
-
   List<Polygon> _buildImportedPolygons(
     List<Map<String, dynamic>> features,
     MapaColorMode mode,
@@ -641,7 +673,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return polygons;
   }
-
   List<Marker> _buildImportedMarkers({
     required List<Map<String, dynamic>> features,
     required int? selectedFeatureIndex,
@@ -651,13 +682,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         selectedFeatureIndex >= features.length) {
       return const [];
     }
-
     final feature = features[selectedFeatureIndex];
     final geometry = _geometryAsMap(feature['geometry']);
     final polygons = _extractPolygons(geometry);
     final center = _centroidOfPolygons(polygons);
     if (center == null) return const [];
-
     return [
       Marker(
         point: center,
@@ -680,10 +709,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     ];
   }
-
   LatLng? _centroidOfPolygons(List<List<List<LatLng>>> polygons) {
     if (polygons.isEmpty) return null;
-
     List<List<LatLng>>? bestRings;
     var bestArea = -1.0;
     for (final rings in polygons) {
@@ -697,21 +724,17 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         bestRings = rings;
       }
     }
-
     if (bestRings == null) return null;
     return _pointForPolygonRings(bestRings);
   }
-
   (LatLng, double)? _ringCentroidWithArea(List<LatLng> ring) {
     final points = ring.length > 1 && ring.first == ring.last
         ? ring.sublist(0, ring.length - 1)
         : ring;
     if (points.length < 3) return null;
-
     var twiceArea = 0.0;
     var centroidX6A = 0.0;
     var centroidY6A = 0.0;
-
     for (var i = 0; i < points.length; i++) {
       final p1 = points[i];
       final p2 = points[(i + 1) % points.length];
@@ -720,52 +743,41 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       centroidX6A += (p1.longitude + p2.longitude) * cross;
       centroidY6A += (p1.latitude + p2.latitude) * cross;
     }
-
     final signedArea = twiceArea / 2;
     if (signedArea.abs() < 1e-12) return null;
-
     final cx = centroidX6A / (6 * signedArea);
     final cy = centroidY6A / (6 * signedArea);
-
     return (LatLng(cy, cx), signedArea.abs());
   }
-
   LatLng? _pointForPolygonRings(List<List<LatLng>> rings) {
     if (rings.isEmpty || rings.first.length < 3) return null;
-
     final outerCentroid = _ringCentroidWithArea(rings.first)?.$1;
     if (outerCentroid != null && _isPointInPolygonWithHoles(outerCentroid, rings)) {
       return outerCentroid;
     }
-
     final polylabel = _polylabelPoint(rings);
     if (polylabel != null) return polylabel;
-
     final outer = rings.first;
     final lat = outer.map((p) => p.latitude).reduce((a, b) => a + b) / outer.length;
     final lng = outer.map((p) => p.longitude).reduce((a, b) => a + b) / outer.length;
     return LatLng(lat, lng);
   }
-
   LatLng? _polylabelPoint(List<List<LatLng>> rings) {
     final outer = rings.first;
     final cleanOuter = outer.length > 1 && outer.first == outer.last
         ? outer.sublist(0, outer.length - 1)
         : outer;
     if (cleanOuter.length < 3) return null;
-
     var minLng = cleanOuter.first.longitude;
     var maxLng = cleanOuter.first.longitude;
     var minLat = cleanOuter.first.latitude;
     var maxLat = cleanOuter.first.latitude;
-
     for (final p in cleanOuter.skip(1)) {
       if (p.longitude < minLng) minLng = p.longitude;
       if (p.longitude > maxLng) maxLng = p.longitude;
       if (p.latitude < minLat) minLat = p.latitude;
       if (p.latitude > maxLat) maxLat = p.latitude;
     }
-
     final width = maxLng - minLng;
     final height = maxLat - minLat;
     final cellSize = math.min(width, height);
@@ -773,10 +785,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       final fallback = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
       return _isPointInPolygonWithHoles(fallback, rings) ? fallback : null;
     }
-
     final precision = math.max(cellSize / 1000, 1e-7);
     final cells = <_PolylabelCell>[];
-
     for (double x = minLng; x < maxLng; x += cellSize) {
       for (double y = minLat; y < maxLat; y += cellSize) {
         final c = _PolylabelCell(
@@ -788,14 +798,12 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         cells.add(c);
       }
     }
-
     var bestCell = _PolylabelCell(
       (minLng + maxLng) / 2,
       (minLat + maxLat) / 2,
       0,
       _signedDistanceToPolygonEdges(LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2), rings),
     );
-
     final centroid = _ringCentroidWithArea(rings.first)?.$1;
     if (centroid != null) {
       final centroidCell = _PolylabelCell(
@@ -806,17 +814,13 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       );
       if (centroidCell.d > bestCell.d) bestCell = centroidCell;
     }
-
     while (cells.isNotEmpty) {
       cells.sort((a, b) => b.max.compareTo(a.max));
       final cell = cells.removeAt(0);
-
       if (cell.d > bestCell.d) {
         bestCell = cell;
       }
-
       if (cell.max - bestCell.d <= precision) continue;
-
       final h = cell.h / 2;
       cells.addAll([
         _PolylabelCell(cell.x - h, cell.y - h, h, _signedDistanceToPolygonEdges(LatLng(cell.y - h, cell.x - h), rings)),
@@ -825,11 +829,9 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         _PolylabelCell(cell.x + h, cell.y + h, h, _signedDistanceToPolygonEdges(LatLng(cell.y + h, cell.x + h), rings)),
       ]);
     }
-
     final point = LatLng(bestCell.y, bestCell.x);
     return _isPointInPolygonWithHoles(point, rings) ? point : null;
   }
-
   bool _isPointInPolygonWithHoles(LatLng point, List<List<LatLng>> rings) {
     if (rings.isEmpty) return false;
     if (!_pointInRing(point, rings.first)) return false;
@@ -838,13 +840,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return true;
   }
-
   double _ringSignedArea(List<LatLng> ring) {
     final points = ring.length > 1 && ring.first == ring.last
         ? ring.sublist(0, ring.length - 1)
         : ring;
     if (points.length < 3) return 0;
-
     var sum = 0.0;
     for (var i = 0; i < points.length; i++) {
       final p1 = points[i];
@@ -853,16 +853,13 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return sum / 2;
   }
-
   double _signedDistanceToPolygonEdges(LatLng point, List<List<LatLng>> rings) {
     var minDistSq = double.infinity;
-
     for (final ring in rings) {
       final points = ring.length > 1 && ring.first == ring.last
           ? ring.sublist(0, ring.length - 1)
           : ring;
       if (points.length < 2) continue;
-
       for (var i = 0; i < points.length; i++) {
         final a = points[i];
         final b = points[(i + 1) % points.length];
@@ -870,34 +867,28 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         if (distSq < minDistSq) minDistSq = distSq;
       }
     }
-
     if (minDistSq == double.infinity) return -1;
-
     final inside = _isPointInPolygonWithHoles(point, rings);
     final dist = math.sqrt(minDistSq);
     return inside ? dist : -dist;
   }
-
   double _distanceToSegmentSquared(LatLng p, LatLng a, LatLng b) {
     final vx = b.longitude - a.longitude;
     final vy = b.latitude - a.latitude;
     final wx = p.longitude - a.longitude;
     final wy = p.latitude - a.latitude;
-
     final c1 = (wx * vx) + (wy * vy);
     if (c1 <= 0) {
       final dx = p.longitude - a.longitude;
       final dy = p.latitude - a.latitude;
       return (dx * dx) + (dy * dy);
     }
-
     final c2 = (vx * vx) + (vy * vy);
     if (c2 <= c1) {
       final dx = p.longitude - b.longitude;
       final dy = p.latitude - b.latitude;
       return (dx * dx) + (dy * dy);
     }
-
     final t = c1 / c2;
     final projX = a.longitude + (t * vx);
     final projY = a.latitude + (t * vy);
@@ -905,7 +896,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     final dy = p.latitude - projY;
     return (dx * dx) + (dy * dy);
   }
-
   /// Centra el mapa en el predio dado (polígono o punto).
   void _flyToPredio(Predio predio) {
     try {
@@ -935,7 +925,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       // Controlador no listo todavía — ignorar silenciosamente.
     }
   }
-
   /// Centra el mapa en una geometría GeoJSON cruda.
   /// Usado como fallback cuando el predio aún no está en prediosMapaProvider.
   void _flyToFeatureGeometry(Map<String, dynamic>? geometry) {
@@ -967,16 +956,13 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       // Controlador no listo — ignorar.
     }
   }
-
   void _focusImportedIfNeeded(List<Map<String, dynamic>> features, List<Polygon> polygons) {    if (features.isEmpty || polygons.isEmpty) {
       _lastImportedFeaturesIdentity = null;
       return;
     }
-
     final identity = identityHashCode(features);
     if (_lastImportedFeaturesIdentity == identity) return;
     _lastImportedFeaturesIdentity = identity;
-
     final allPoints = <LatLng>[];
     for (final polygon in polygons) {
       allPoints.addAll(polygon.points);
@@ -985,12 +971,10 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
     }
     if (allPoints.isEmpty) return;
-
     final bounds = LatLngBounds(allPoints.first, allPoints.first);
     for (final point in allPoints.skip(1)) {
       bounds.extend(point);
     }
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       try {
@@ -1005,7 +989,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
     });
   }
-
   Map<String, dynamic>? _geometryAsMap(dynamic geometry) {
     if (geometry is Map<String, dynamic>) return geometry;
     if (geometry is Map) {
@@ -1025,14 +1008,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return null;
   }
-
   List<List<List<LatLng>>> _extractPolygons(Map<String, dynamic>? geometry) {
     if (geometry == null) return const [];
-
     final type = geometry['type'] as String?;
     final coords = geometry['coordinates'];
     if (type == null || coords is! List || coords.isEmpty) return const [];
-
     if (type == 'Polygon') {
       final rings = coords
           .whereType<List>()
@@ -1041,7 +1021,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           .toList();
       return rings.isEmpty ? const [] : [rings];
     }
-
     if (type == 'MultiPolygon') {
       final polygons = <List<List<LatLng>>>[];
       for (final polygon in coords.whereType<List>()) {
@@ -1054,15 +1033,12 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
       return polygons;
     }
-
     return const [];
   }
-
   List<List<LatLng>> _extractRings(Map<String, dynamic>? geometry) {
     final polygons = _extractPolygons(geometry);
     return polygons.isEmpty ? const [] : polygons.first;
   }
-
   List<LatLng> _ringToLatLng(List<dynamic> ring) {
     try {
       final pairs = <(double, double)>[];
@@ -1074,7 +1050,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         pairs.add((x, y));
       }
       if (pairs.isEmpty) return const [];
-
       // 1) GeoJSON estándar [lng, lat] o invertido [lat, lng]
       final direct = pairs
           .map((p) {
@@ -1089,7 +1064,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       if (direct.length >= 3) {
         return direct;
       }
-
       // 2) Fallback UTM (común en archivos geolocalizados de México)
       final sampleX = pairs.map((p) => p.$1).toList();
       final sampleY = pairs.map((p) => p.$2).toList();
@@ -1097,7 +1071,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       if (utmZone == null) {
         return const [];
       }
-
       final converted = pairs
           .map((p) {
             final ll = _utmToWgs84(p.$1, p.$2, utmZone);
@@ -1108,23 +1081,19 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           })
           .whereType<LatLng>()
           .toList();
-
       return converted;
     } catch (_) {
       return const [];
     }
   }
-
   double? _parseCoord(dynamic value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value.trim());
     return null;
   }
-
   bool _isValidLatLng({required double lat, required double lng}) {
     return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
   }
-
   int? _detectMexicoUtmZone(List<double> sampleX, List<double> sampleY) {
     if (sampleX.isEmpty || sampleY.isEmpty) return null;
     final x = sampleX.first;
@@ -1139,41 +1108,33 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return null;
   }
-
   List<double> _utmToWgs84(double easting, double northing, int zone,
       {bool isNorth = true}) {
     const a = 6378137.0;
     const f = 1 / 298.257223563;
     const k0 = 0.9996;
     const e0 = 500000.0;
-
     final e2 = 2 * f - f * f;
     final ePrime2 = e2 / (1 - e2);
     final e1 = (1 - math.sqrt(1 - e2)) / (1 + math.sqrt(1 - e2));
-
     final x = easting - e0;
     final y = isNorth ? northing : northing - 10000000.0;
-
     final m = y / k0;
     final mu = m /
         (a * (1 - e2 / 4 - 3 * e2 * e2 / 64 - 5 * e2 * e2 * e2 / 256));
-
     final phi1 = mu +
         (3 * e1 / 2 - 27 * math.pow(e1, 3) / 32) * math.sin(2 * mu) +
         (21 * e1 * e1 / 16 - 55 * math.pow(e1, 4) / 32) * math.sin(4 * mu) +
         (151 * math.pow(e1, 3) / 96) * math.sin(6 * mu) +
         (1097 * math.pow(e1, 4) / 512) * math.sin(8 * mu);
-
     final sinPhi1 = math.sin(phi1);
     final cosPhi1 = math.cos(phi1);
     final tanPhi1 = math.tan(phi1);
-
     final n1 = a / math.sqrt(1 - e2 * sinPhi1 * sinPhi1);
     final t1 = tanPhi1 * tanPhi1;
     final c1 = ePrime2 * cosPhi1 * cosPhi1;
     final r1 = a * (1 - e2) / math.pow(1 - e2 * sinPhi1 * sinPhi1, 1.5);
     final d = x / (n1 * k0);
-
     final lat = phi1 -
         (n1 * tanPhi1 / r1) *
             (d * d / 2 -
@@ -1188,7 +1149,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                         3 * c1 * c1) *
                     math.pow(d, 6) /
                     720);
-
     final lambda0 = ((zone - 1) * 6 - 180 + 3) * math.pi / 180;
     final lng = lambda0 +
         (d -
@@ -1202,21 +1162,17 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                     math.pow(d, 5) /
                     120) /
             cosPhi1;
-
     return [lng * 180 / math.pi, lat * 180 / math.pi];
   }
-
   LatLng? _markerPoint(Predio predio, List<List<LatLng>> rings) {
     if (rings.isNotEmpty) {
       return _pointForPolygonRings(rings);
     }
-
     if (predio.latitud != null && predio.longitud != null) {
       return LatLng(predio.latitud!, predio.longitud!);
     }
     return null;
   }
-
   Widget _buildMarkerDot(Color color) {
     return Icon(
       Icons.location_pin,
@@ -1230,7 +1186,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ],
     );
   }
-
   Widget _buildLayersPanel(MapaColorMode mode, MapaBaseLayer currentLayer) {
     final isSatelital = currentLayer == MapaBaseLayer.satelital;
     return Card(
@@ -1276,7 +1231,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     );
   }
-
   Widget _buildVisualizacionControl(MapaColorMode mode) {
     return Card(
       elevation: 6,
@@ -1324,7 +1278,150 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     );
   }
-
+  /// Panel de control de rotación - solo campo de texto y botón de regresar al norte.
+  Widget _buildRotationPanel() {
+    return Card(
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Campo de texto para ingresar grados
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 80,
+                  child: TextField(
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    controller: TextEditingController(text: _currentRotation.toStringAsFixed(0)),
+                    onSubmitted: (value) {
+                      final degrees = double.tryParse(value);
+                      if (degrees != null) {
+                        _rotateToDegrees(degrees % 360);
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  '°',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF555555),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Botón de regresar al norte
+                Material(
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _rotateToDegrees(0),
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.navigation,
+                        size: 20,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  /// Rosa de los vientos con forma de estrella de 8 puntas - parte inferior derecha del mapa.
+  Widget _buildCompassRose() {
+    return Transform.rotate(
+      angle: _currentRotation * math.pi / 180,
+      child: CustomPaint(
+        size: const Size(60, 60),
+        painter: _EightPointStarPainter(),
+      ),
+    );
+  }
+  /// Rota el mapa el ángulo especificado.
+  void _rotateMap(double angle, {bool reset = false}) {
+    final newRotation = reset ? 0.0 : (_currentRotation + angle) % 360;
+    setState(() {
+      _currentRotation = newRotation;
+    });
+    try {
+      _mapCtrl.rotate(newRotation);
+    } catch (_) {
+      // Ignorar si el controlador no está listo
+    }
+  }
+  /// Rota el mapa a los grados especificados (entrada directa).
+  void _rotateToDegrees(double degrees) {
+    setState(() {
+      _currentRotation = degrees % 360;
+    });
+    try {
+      _mapCtrl.rotate(_currentRotation);
+    } catch (_) {
+      // Ignorar si el controlador no está listo
+    }
+  }
+  /// Botón para establecer una rotación predefinida.
+  Widget _rotationPresetButton(String label, double rotation) {
+    final isActive = (_currentRotation.abs() - rotation.abs()).abs() < 5;
+    return Material(
+      color: isActive ? AppColors.primary.withValues(alpha: 0.1) : Colors.white,
+      borderRadius: BorderRadius.circular(6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: () {
+          // Primero resetear a 0, luego ajustar a la rotación deseada
+          _rotateMap(0, reset: true);
+          if (rotation != 0) {
+            _rotateMap(rotation);
+          }
+        },
+        child: Container(
+          width: 36,
+          height: 28,
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: isActive ? AppColors.primary : const Color(0xFFE0E0E0),
+            ),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: isActive ? AppColors.primary : const Color(0xFF555555),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
   Widget _layerButton({
     required String title,
     required String subtitle,
@@ -1368,7 +1465,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     );
   }
-
   Widget _buildPredioCard(Predio predio) {
     final mode = ref.watch(mapaColorModeProvider);
     final color = _predioColor(predio, mode);
@@ -1440,7 +1536,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     );
   }
-
   Widget _buildCapturaModal() {
     final area = _detectedAreaM2 > 0 ? _detectedAreaM2 : _calculateAreaSquareMeters(_draftPoints);
     final predios = ref.watch(prediosMapaProvider).asData?.value ?? const <Predio>[];
@@ -1800,13 +1895,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                 ),
               ],
             ),
-
           ],
         ),
       ),
     );
   }
-
   void _toggleManualLinkMode() {
     setState(() {
       _isManualLinkMode = !_isManualLinkMode;
@@ -1818,24 +1911,20 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
     });
   }
-
   List<Predio> _prediosSinPoligono(List<Predio> predios) {
     return predios.where((p) {
       final vinculado = p.poligonoInsertado || p.geometry != null;
       return !vinculado;
     }).toList(growable: false);
   }
-
   String _manualPredioLabel(Predio predio) {
     final owner = predio.nombrePropietario.trim();
     return '${predio.claveCatastral} · $owner';
   }
-
   bool _isImportedFeatureLinked(Map<String, dynamic> feature) {
     final s = _linkedPredioIdFromFeature(feature);
     return s != null && s.isNotEmpty;
   }
-
   String? _linkedPredioIdFromFeature(Map<String, dynamic> feature) {
     final rawProps = feature['properties'];
     if (rawProps is! Map) return null;
@@ -1845,7 +1934,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     if (s == null || s.isEmpty) return null;
     return s;
   }
-
   String _poligonoIdFromFeature({
     required List<Map<String, dynamic>> importedFeatures,
     required int index,
@@ -1867,7 +1955,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     if (asText != null && asText.isNotEmpty) return asText;
     return 'feature-$index';
   }
-
   bool _sameGeometryMap(
     Map<String, dynamic>? a,
     Map<String, dynamic>? b,
@@ -1875,7 +1962,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     if (a == null || b == null) return false;
     return jsonEncode(a) == jsonEncode(b);
   }
-
   List<Map<String, dynamic>> _removeImportedDuplicatesAfterLink({
     required List<Map<String, dynamic>> imported,
     required int selectedIndex,
@@ -1889,7 +1975,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       if (i == selectedIndex) {
         continue;
       }
-
       final samePredio = _linkedPredioIdFromFeature(feature) == linkedPredioId;
       final samePoligono =
           _poligonoIdFromFeature(importedFeatures: imported, index: i) == linkedPoligonoId;
@@ -1897,7 +1982,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           ? Map<String, dynamic>.from(feature['geometry'] as Map)
           : null;
       final sameGeometry = _sameGeometryMap(geometry, linkedGeometry);
-
       if (samePredio || samePoligono || sameGeometry) {
         continue;
       }
@@ -1905,12 +1989,10 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return output;
   }
-
   Future<void> _vincularPoligonoManual(List<Predio> predios) async {
     final idx = _manualFeatureIndex;
     final predioId = _manualSelectedPredioId;
     if (idx == null || predioId == null) return;
-
     final imported = ref.read(importedFeaturesProvider);
     if (idx < 0 || idx >= imported.length) return;
     final feature = imported[idx];
@@ -1923,17 +2005,14 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       );
       return;
     }
-
     final predio = predios.cast<Predio?>().firstWhere(
           (p) => p?.id == predioId,
           orElse: () => null,
         );
     if (predio == null) return;
-
     setState(() => _isLinkingManual = true);
     try {
       final idPoligono = _poligonoIdFromFeature(importedFeatures: imported, index: idx);
-
       if (predio.id.startsWith('local-')) {
         ref.read(localPrediosProvider.notifier).updatePredio(
               predio.copyWith(
@@ -1949,7 +2028,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               geometry: geometry,
             );
       }
-
         final removedLocalDuplicates =
             ref.read(localPrediosProvider.notifier).removeDuplicatesAfterManualLink(
               keepPredioId: predio.id,
@@ -1957,7 +2035,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               keepClave: predio.claveCatastral,
               linkedOwner: predio.nombrePropietario,
             );
-
       final updatedImported = _removeImportedDuplicatesAfterLink(
         imported: imported,
         selectedIndex: idx,
@@ -1966,10 +2043,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         linkedGeometry: geometry,
       );
       ref.read(importedFeaturesProvider.notifier).state = updatedImported;
-
       ref.invalidate(prediosListProvider);
       ref.invalidate(prediosMapaProvider);
-
       if (!mounted) return;
       setState(() {
         _isLinkingManual = false;
@@ -1995,7 +2070,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       );
     }
   }
-
   Widget _buildCapturaToggleButton() {
     return Material(
       color: Colors.transparent,
@@ -2041,7 +2115,288 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     );
   }
-
+  /// Botón para captura de pantalla del mapa
+  Widget _buildCapturaPantallaButton() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _capturarPantalla(),
+            borderRadius: BorderRadius.circular(14),
+            child: Ink(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFD9D9D9)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x1F000000),
+                    blurRadius: 12,
+                    offset: Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.camera_alt_outlined, size: 18, color: Color(0xFF2A5B52)),
+                  const SizedBox(width: 8),
+                  Icon(
+                    _showCapturaPantalla ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                    size: 18,
+                    color: const Color(0xFF747474),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_showCapturaPantalla) ...[
+          const SizedBox(height: 6),
+          _buildCapturaOpcionesPanel(),
+        ],
+      ],
+    );
+  }
+  /// Panel de opciones para captura de pantalla
+  Widget _buildCapturaOpcionesPanel() {
+    return Card(
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Captura de pantalla del mapa',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Guarda una imagen PNG del mapa visible.',
+              style: TextStyle(
+                fontSize: 11,
+                color: Color(0xFF666666),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isCapturingScreen ? null : _capturarPantalla,
+                icon: _isCapturingScreen
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.photo_camera_outlined, size: 18),
+                label: Text(_isCapturingScreen ? 'Capturando...' : 'Capturar y guardar'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  /// Realiza la captura de pantalla del mapa con selección de región
+  Future<void> _capturarPantalla() async {
+    // Usar selección en vivo para que el usuario pueda ver el mapa mientras selecciona
+    // Obtener todos los datos necesarios para renderizar los polígonos
+    final mediaQueryData = MediaQuery.of(context);
+    final baseLayer = ref.read(mapaBaseLayerProvider);
+    final colorMode = ref.watch(mapaColorModeProvider);
+    final importedFeatures = ref.watch(importedFeaturesProvider);
+    
+    // Usar polígonos cacheados o construirlos
+    List<Polygon> importedPolygons;
+    if (_lastImportedFeatures == importedFeatures && _lastColorMode == colorMode) {
+      importedPolygons = _lastImportedPolygons ?? [];
+    } else {
+      importedPolygons = _buildImportedPolygons(importedFeatures, colorMode);
+      _lastImportedFeatures = importedFeatures;
+      _lastColorMode = colorMode;
+      _lastImportedPolygons = importedPolygons;
+    }
+    
+    // Obtener prediosAsync para construir visuales
+    final prediosAsync = ref.watch(prediosMapaProvider);
+    final predios = prediosAsync.asData?.value ?? <Predio>[];
+    final visuals = _buildVisualData(predios, colorMode);
+    
+    // Crear el widget del mapa completo con todos los polígonos
+    final mapaWidget = Material(
+      child: SizedBox(
+        width: mediaQueryData.size.width,
+        height: mediaQueryData.size.height,
+        child: FlutterMap(
+          mapController: _mapCtrl,
+          options: MapOptions(
+            initialCenter: _defaultCenter,
+            initialZoom: _defaultZoom,
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: _tileTemplate(baseLayer),
+              maxZoom: 19,
+              userAgentPackageName: 'com.geoportal.predios',
+            ),
+            // Capa de polígonos de Gestión
+            PolygonLayer(
+              polygons: visuals
+                  .where((v) => v.polygon != null)
+                  .map((v) => v.polygon!)
+                  .toList(),
+            ),
+            // Capa de polígonos importados desde GeoJSON
+            if (importedPolygons.isNotEmpty)
+              PolygonLayer(
+                polygons: importedPolygons,
+              ),
+            // Capa de polígonos capturados
+            if (_capturedPolygons.isNotEmpty)
+              PolygonLayer(
+                polygons: _capturedPolygons
+                    .map(
+                      (sp) => Polygon(
+                        points: sp.points,
+                        color: _savedPolygonColor(sp, colorMode).withValues(alpha: 0.46),
+                        borderColor: _savedPolygonColor(sp, colorMode),
+                        borderStrokeWidth: 2,
+                      ),
+                    )
+                    .toList(),
+              ),
+          ],
+        ),
+      ),
+    );
+    
+    _screenshotCtrl.startLiveSelectionCapture(
+      context: context,
+      child: mapaWidget,
+      captureFunction: () async {
+        // Aumentar el delay para asegurar que los polígonos se rendericen
+        final image = await _screenshotPackageCtrl.captureFromWidget(
+          MediaQuery(
+            data: mediaQueryData,
+            child: mapaWidget,
+          ),
+          delay: const Duration(milliseconds: 300),
+          pixelRatio: 2.0,
+        );
+        return image;
+      },
+      onCaptured: (Uint8List croppedBytes) async {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final fileName = 'mapa_lddv_$timestamp.png';
+        
+        // Detectar si es web
+        final isWeb = identical(0, 0.0);
+        
+        if (isWeb) {
+          // En web, usar download de dart:html
+          _downloadWeb(croppedBytes, fileName);
+        } else {
+          // En móvil/desktop, guardar en directorio local
+          try {
+            final directory = await getApplicationDocumentsDirectory();
+            final filePath = '${directory.path}/$fileName';
+            final file = File(filePath);
+            await file.writeAsBytes(croppedBytes);
+            
+            if (!mounted) return;
+            
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Captura guardada: $fileName'),
+                action: SnackBarAction(
+                  label: 'Compartir',
+                  onPressed: () => _compartirCaptura(filePath),
+                ),
+              ),
+            );
+          } catch (e) {
+            debugPrint('Error al guardar captura: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Error al guardar: $e')),
+              );
+            }
+          }
+        }
+      },
+      onCancel: () {
+        debugPrint('Captura cancelada por el usuario');
+      },
+    );
+  }
+  /// Comparte la captura de pantalla
+  Future<void> _compartirCaptura(String filePath) async {
+    try {
+      await Share.shareXFiles(
+        [XFile(filePath)],
+        text: 'Captura del mapa LDDV',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al compartir: $e')),
+      );
+    }
+  }
+  
+  /// Descarga la captura en el navegador web
+  void _downloadWeb(Uint8List bytes, String fileName) {
+    try {
+      // Crear un Blob con la imagen usando dart:html
+      final blob = html.Blob([bytes], 'image/png');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+      
+      // Crear un elemento <a> temporal para descargar
+      final anchor = html.document.createElement('a') as html.AnchorElement;
+      anchor.href = url;
+      anchor.download = fileName;
+      anchor.style.display = 'none';
+      html.document.body?.append(anchor);
+      
+      // Hacer clic y luego remover
+      anchor.click();
+      html.document.body?.children.remove(anchor);
+      
+      // Liberar la URL después de un momento
+      Future.delayed(const Duration(milliseconds: 100), () {
+        html.Url.revokeObjectUrl(url);
+      });
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Captura descargada: $fileName')),
+      );
+    } catch (e) {
+      debugPrint('Error al descargar en web: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al descargar: $e')),
+      );
+    }
+  }
   Widget _buildTextField({
     required String label,
     required TextEditingController controller,
@@ -2075,7 +2430,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ],
     );
   }
-
   Widget _buildSelectField({
     required String label,
     required String? value,
@@ -2120,7 +2474,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ],
     );
   }
-
   Widget _buildKmField({
     required String label,
     required TextEditingController controller,
@@ -2151,11 +2504,9 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
             ),
           ),
         ),
-
       ],
     );
   }
-
   Future<void> _togglePolygonSelection() async {
     if (!_isDrawing) {
       setState(() {
@@ -2165,14 +2516,12 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       });
       return;
     }
-
     setState(() {
       _isDrawing = false;
       _draftPoints.clear();
       _detectedAreaM2 = 0;
     });
   }
-
   void _clearSelectedPolygon() {
     setState(() {
       _importedFeatureIndex = null;
@@ -2182,29 +2531,24 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       _detectingUbicacion = false;
     });
   }
-
   String? _normalizeProyecto(String? proyecto) {
     if (proyecto == null) return null;
     final normalized = proyecto.trim().toUpperCase();
     if (normalized.isEmpty || normalized == 'SIN PROYECTO') return null;
     return normalized;
   }
-
   String? _mergeOficioProyectoTag(String? oficioActual, String? proyecto) {
     final cleanOficio = (oficioActual ?? '')
         .replaceAll(RegExp(r'\[PROY:[^\]]+\]\s*'), '')
         .trim();
     final proyectoNormalizado = _normalizeProyecto(proyecto);
-
     if (proyectoNormalizado == null) {
       return cleanOficio.isEmpty ? null : cleanOficio;
     }
-
     final tag = '[PROY:$proyectoNormalizado]';
     if (cleanOficio.isEmpty) return tag;
     return '$tag $cleanOficio';
   }
-
   String? _inferProyectoFromText(String text) {
     final upper = text.toUpperCase();
     const proyectos = ['TQI', 'TSNL', 'TAP', 'TQM'];
@@ -2213,7 +2557,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return null;
   }
-
   String _normalizeFieldKey(String input) {
     var value = input.toLowerCase();
     const replacements = {
@@ -2243,44 +2586,35 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     value = value.replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
     return value;
   }
-
   Set<String> _keyParts(String input) {
     final normalized = _normalizeFieldKey(input);
     if (normalized.isEmpty) return <String>{};
     return normalized.split(' ').where((part) => part.isNotEmpty).toSet();
   }
-
   int _similarityScore(String candidateKey, String expectedKey) {
     final candidateNorm = _normalizeFieldKey(candidateKey).replaceAll(' ', '');
     final expectedNorm = _normalizeFieldKey(expectedKey).replaceAll(' ', '');
     if (candidateNorm.isEmpty || expectedNorm.isEmpty) return 0;
-
     if (candidateNorm == expectedNorm) return 100;
     if (candidateNorm.contains(expectedNorm) || expectedNorm.contains(candidateNorm)) {
       return 88;
     }
-
     final candidateParts = _keyParts(candidateKey);
     final expectedParts = _keyParts(expectedKey);
     if (candidateParts.isEmpty || expectedParts.isEmpty) return 0;
-
     final shared = candidateParts.intersection(expectedParts).length;
     if (shared == 0) return 0;
-
     if (shared == expectedParts.length) return 80;
     return 60;
   }
-
   String? _propValue(Map<String, dynamic> props, List<String> keys) {
     String? bestValue;
     var bestScore = 0;
-
     for (final entry in props.entries) {
       final rawValue = entry.value;
       if (rawValue == null) continue;
       final text = rawValue.toString().trim();
       if (text.isEmpty) continue;
-
       for (var i = 0; i < keys.length; i++) {
         final key = keys[i];
         final score = _similarityScore(entry.key, key) - (i * 2);
@@ -2290,24 +2624,20 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         }
       }
     }
-
     // Umbral moderado para tolerar variaciones reales de llaves en GeoJSON.
     return bestScore >= 40 ? bestValue : null;
   }
-
   Map<String, dynamic> _flattenFeatureProps(
     Map<String, dynamic> feature,
     Map<String, dynamic> props,
   ) {
     final merged = <String, dynamic>{...props};
-
     // Incluir campos de primer nivel del feature (algunos archivos no usan "properties").
     for (final entry in feature.entries) {
       final key = entry.key;
       if (key == 'type' || key == 'geometry' || key == 'properties') continue;
       merged[key] = entry.value;
     }
-
     // Aplanar maps anidados para detectar llaves tipo attributes.owner, data.proyecto, etc.
     final flattened = <String, dynamic>{...merged};
     for (final entry in merged.entries) {
@@ -2321,31 +2651,24 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         }
       }
     }
-
     return flattened;
   }
-
   Future<void> _saveSelectedPolygon() async {
     if (_draftPoints.length < 4) return;
-
     if (_selectedPredio == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selecciona un predio antes de guardar el poligono.')),
       );
       return;
     }
-
     final selected = _selectedPredio!;
     final geoJson = _polygonToGeoJson(_draftPoints);
     final proyectoNormalizado = _normalizeProyecto(_proyecto);
     final oficioConProyecto = _mergeOficioProyectoTag(selected.oficio, proyectoNormalizado);
-
     try {
       final isDemo = ref.read(demoModeProvider);
       final superficieDetectada = _detectedAreaM2 > 0 ? _detectedAreaM2 : _calculateAreaSquareMeters(_draftPoints);
-
       final isLocal = selected.id.startsWith('local-');
-
       if (isDemo || isLocal) {
         final notifier = isDemo
             ? ref.read(demoPrediosNotifierProvider.notifier)
@@ -2383,12 +2706,10 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
           'municipio': _municipioCtrl.text.trim().isEmpty ? null : _municipioCtrl.text.trim(),
         });
       }
-
       ref.invalidate(prediosMapaProvider);
       ref.invalidate(prediosListProvider);
       ref.invalidate(propietariosListProvider);
       ref.invalidate(predioDetalleProvider(selected.id));
-
       if (!mounted) return;
       setState(() {
         _capturedPolygons.add(
@@ -2412,9 +2733,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       );
     }
   }
-
   // ── Helpers para features GeoJSON importados ──────────────────────────────
-
   /// Devuelve el índice del primer feature importado que contiene [point].
   int? _findImportedAtPoint(LatLng point, List<Map<String, dynamic>> features) {
     for (int i = features.length - 1; i >= 0; i--) {
@@ -2427,7 +2746,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return null;
   }
-
   /// Abre el modal de captura pre-relleno con los datos del feature importado.
   void _openCapturaForImportedFeature(Map<String, dynamic> feature, int idx) {
     final rawProps = feature['properties'];
@@ -2469,21 +2787,141 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         'nom_proyecto',
         'project',
       ]);
-
+      // Detectar KM inicio
+      final kmInicioDetectado = _propValue(allProps, [
+        'km_inicio',
+        'kminicio',
+        'km_ini',
+        'km_start',
+        'km_i',
+        'km1',
+        'inicio_km',
+        'start_km',
+      ]);
+      
+      // Detectar KM fin
+      final kmFinDetectado = _propValue(allProps, [
+        'km_fin',
+        'kmfin',
+        'km_fin',
+        'km_end',
+        'km_f',
+        'km2',
+        'fin_km',
+        'end_km',
+      ]);
+      
+      // Detectar KM efectivos
+      final kmEfectivosDetectado = _propValue(allProps, [
+        'km_efectivos',
+        'kmefectivos',
+        'km_efec',
+        'km_effectives',
+        'km_e',
+        'efectivos_km',
+        'effective_km',
+        'longitud',
+        'length',
+      ]);
+      
+      // Detectar área/m2
+      final areaDetectada = _propValue(allProps, [
+        'area',
+        'm2',
+        'superficie',
+        'superf',
+        'area_m2',
+        'area_meters',
+        'sup',
+        'surface',
+        'shape_area',
+        'shape__area',
+      ]);
+      
+      // Detectar observaciones
+      final observacionesDetectado = _propValue(allProps, [
+        'observaciones',
+        'observaciones_',
+        'obs',
+        'notas',
+        'notes',
+        'comentarios',
+        'comments',
+        'descripcion',
+        'description',
+      ]);
+      // Detectar estado y municipio (incluye campos combinados como "Estado/Municipio")
+      String? estadoDetectado = _propValue(allProps, [
+        'estado',
+        'entidad',
+        'state',
+        'edo',
+      ]);
+      String? municipioDetectado = _propValue(allProps, [
+        'municipio',
+        'municipality',
+        'city',
+        'alcaldia',
+        'mun',
+      ]);
+      
+      // Si no se encontraron separados, intentar separar campo combinado
+      if (estadoDetectado == null || municipioDetectado == null) {
+        final estadoMunicipioCombinado = _propValue(allProps, [
+          'estado_municipio',
+          'estado/municipio',
+          'municipio_estado',
+          'ubicacion',
+          'location',
+        ]);
+        if (estadoMunicipioCombinado != null && estadoMunicipioCombinado.contains('/')) {
+          final parts = estadoMunicipioCombinado.split('/');
+          if (estadoDetectado == null && parts.isNotEmpty) {
+            estadoDetectado = parts[0].trim();
+          }
+          if (municipioDetectado == null && parts.length > 1) {
+            municipioDetectado = parts[1].trim();
+          }
+        } else if (estadoMunicipioCombinado != null && estadoMunicipioCombinado.contains(',')) {
+          final parts = estadoMunicipioCombinado.split(',');
+          if (estadoDetectado == null && parts.isNotEmpty) {
+            estadoDetectado = parts[0].trim();
+          }
+          if (municipioDetectado == null && parts.length > 1) {
+            municipioDetectado = parts[1].trim();
+          }
+        }
+      }
       _importedFeatureIndex = idx;
       _selectedPredio = null;
       _draftPoints
         ..clear()
         ..addAll(points);
       _isDrawing = false;
-      _detectedAreaM2 = _calculateAreaSquareMeters(points);
+      
+      // Usar área detectada del archivo o calcular del polígono
+      if (areaDetectada != null) {
+        _importedAreaM2 = double.tryParse(areaDetectada.replaceAll(',', ''));
+      }
+      _detectedAreaM2 = _importedAreaM2 ?? _calculateAreaSquareMeters(points);
+      
       _showCapturaModal = true;
       _tramoCtrl.text = tramoDetectado ?? '';
       _propietarioCtrl.text = propietarioDetectado ?? '';
-      _estadoCtrl.text = _propValue(allProps, ['estado', 'entidad', 'state']) ?? '';
-      _municipioCtrl.text = _propValue(allProps, ['municipio', 'municipality', 'city', 'alcaldia']) ?? '';
+      _estadoCtrl.text = estadoDetectado ?? '';
+      _municipioCtrl.text = municipioDetectado ?? '';
       _tipoPropiedad = _propValue(allProps, ['tipo_propiedad', 'tipopropiedad', 'uso_suelo', 'usosuelo']);
       _estatusPredio = null;
+      
+      // Asignar KM detectados
+      _importedKmInicio = kmInicioDetectado;
+      _importedKmFin = kmFinDetectado;
+      _importedKmEfectivos = kmEfectivosDetectado;
+      _importedObservaciones = observacionesDetectado;
+      
+      // Asignar a los campos de texto si están disponibles
+      _kmInicioCtrl.text = kmInicioDetectado ?? '0+000';
+      _kmFinCtrl.text = kmFinDetectado ?? '0+000';
         _proyecto = _normalizeProyecto(proyectoDetectado) ??
           _inferProyectoFromText([
           proyectoDetectado ?? '',
@@ -2502,7 +2940,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     );
   }
-
   /// Crea un nuevo predio en la base de datos a partir del feature importado activo.
   Future<void> _saveImportedFeatureAsPredio() async {
     if (_draftPoints.length < 4 || _importedFeatureIndex == null) return;
@@ -2521,13 +2958,11 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     final propietarioNombre = _propietarioCtrl.text.trim();
     final proyectoNormalizado = _normalizeProyecto(_proyecto);
     final oficioConProyecto = _mergeOficioProyectoTag(null, proyectoNormalizado);
-
     try {
       final isDemo = ref.read(demoModeProvider);
       if (!isDemo) {
         final propietariosRepo = ref.read(propietariosRepositoryProvider);
         final propietario = await propietariosRepo.findOrCreateByNombreCompleto(propietarioNombre);
-
         final repo = ref.read(prediosRepositoryProvider);
         await repo.createPredio({
           'clave_catastral': clave,
@@ -2570,7 +3005,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
               ),
             );
       }
-
       // Guardar en la tabla de proyectos capturados
       final proyecto = Proyecto(
         id: clave,
@@ -2588,17 +3022,14 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         createdAt: DateTime.now(),
       );
       ref.read(proyectosProvider.notifier).addProyecto(proyecto);
-
       // Eliminar el feature de la lista de importados
       final current = ref.read(importedFeaturesProvider);
       final updated = List<Map<String, dynamic>>.from(current);
       if (idx < updated.length) updated.removeAt(idx);
       ref.read(importedFeaturesProvider.notifier).state = updated;
-
       ref.invalidate(prediosMapaProvider);
       ref.invalidate(prediosListProvider);
       ref.invalidate(propietariosListProvider);
-
       if (!mounted) return;
       setState(() {
         _importedFeatureIndex = null;
@@ -2623,14 +3054,12 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       );
     }
   }
-
   /// Convierte un double de km (ej. 10.5) al formato "10+500"
   String _formatKm(double km) {
     final enteros = km.truncate();
     final metros = ((km - enteros) * 1000).round();
     return '$enteros+${metros.toString().padLeft(3, '0')}';
   }
-
   /// Convierte un string KM (ej. "0+000" o "10.5") a double
   double? _parseKm(String kmStr) {
     if (kmStr.trim().isEmpty) return null;
@@ -2645,7 +3074,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return double.tryParse(str);
   }
-
   Map<String, dynamic> _polygonToGeoJson(List<LatLng> points) {
     final closed = points.first == points.last ? points : [...points, points.first];
     final ring = closed
@@ -2656,16 +3084,13 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       'coordinates': [ring],
     };
   }
-
   double _calculateAreaSquareMeters(List<LatLng> points) {
     if (points.length < 3) return 0;
     final closed = points.first == points.last ? points : [...points, points.first];
     if (closed.length < 4) return 0;
-
     final meanLat = closed.map((p) => p.latitude).reduce((a, b) => a + b) / closed.length;
     final metersPerDegLat = 111132.0;
     final metersPerDegLng = 111320.0 * math.cos(meanLat * math.pi / 180.0);
-
     double sum = 0;
     for (var i = 0; i < closed.length - 1; i++) {
       final x1 = closed[i].longitude * metersPerDegLng;
@@ -2676,13 +3101,10 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
     }
     return (sum.abs() / 2.0);
   }
-
   Future<void> _autofillEstadoMunicipioDesdePoligono() async {
     if (_draftPoints.length < 3) return;
-
     final centroid = _polygonCentroid(_draftPoints);
     if (centroid == null) return;
-
     setState(() => _detectingUbicacion = true);
     try {
       final uri = Uri.parse(
@@ -2690,10 +3112,8 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       );
       final response = await http.get(uri, headers: const {'Accept': 'application/json'});
       if (response.statusCode != 200) return;
-
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final address = (data['address'] as Map?)?.cast<String, dynamic>() ?? {};
-
       final estado = (address['state'] ?? address['region'] ?? '').toString().trim();
       final municipio = (
         address['city'] ??
@@ -2702,7 +3122,6 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
         address['county'] ??
         ''
       ).toString().trim();
-
       if (!mounted) return;
       setState(() {
         if (estado.isNotEmpty) _estadoCtrl.text = estado;
@@ -2716,24 +3135,20 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       }
     }
   }
-
   LatLng? _polygonCentroid(List<LatLng> points) {
     if (points.length < 3) return null;
     final clean = points.first == points.last ? points.sublist(0, points.length - 1) : points;
     if (clean.isEmpty) return null;
-
     final lat = clean.map((p) => p.latitude).reduce((a, b) => a + b) / clean.length;
     final lng = clean.map((p) => p.longitude).reduce((a, b) => a + b) / clean.length;
     return LatLng(lat, lng);
   }
-
   String _formatArea(double areaM2) {
     if (areaM2 >= 1000000) {
       return '${(areaM2 / 1000000).toStringAsFixed(2)} km2';
     }
     return '${areaM2.toStringAsFixed(2)} m2';
   }
-
   Widget _statusChip(String label, bool active) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -2754,12 +3169,10 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ),
     );
   }
-
   Color _importedFeatureColor(Map<String, dynamic> feature, MapaColorMode mode) {
     final props = feature['properties'];
     final propsMap = props is Map ? Map<String, dynamic>.from(props) : <String, dynamic>{};
     final allProps = _flattenFeatureProps(feature, propsMap);
-
     if (mode == MapaColorMode.tipoPropiedad) {
       final tipo = _propValue(allProps, [
         'tipo_propiedad',
@@ -2770,25 +3183,20 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
       ]);
       return AppColors.tipoPropiedadColor(tipo ?? 'Sin tipo');
     }
-
     final estatus = _propValue(allProps, [
       'estatus_predio',
       'estatus',
       'estado_predio',
       'situacion',
     ]);
-
     if (estatus != null) {
       final normalized = estatus.trim().toLowerCase();
       if (normalized == 'liberado') return _estatusColor('Liberado');
       if (normalized == 'no liberado') return _estatusColor('No liberado');
     }
-
     return _estatusColor(null);
   }
-
 }
-
 Color _estatusColor(String? estatus) {
   switch (estatus) {
     case 'Liberado':
@@ -2799,37 +3207,30 @@ Color _estatusColor(String? estatus) {
       return const Color(0xFF6D6D6D); // gray
   }
 }
-
 class _PolylabelCell {
   final double x;
   final double y;
   final double h;
   final double d;
-
   const _PolylabelCell(this.x, this.y, this.h, this.d);
-
   double get max => d + h * math.sqrt2;
 }
-
 class _SavedPolygon {
   final List<LatLng> points;
   final String? estatus;
   final String? tipoPropiedad;
-
   const _SavedPolygon({
     required this.points,
     this.estatus,
     this.tipoPropiedad,
   });
 }
-
 class _PredioVisualData {
   final Predio predio;
   final Color color;
   final List<List<LatLng>> rings;
   final Polygon? polygon;
   final LatLng? markerPoint;
-
   const _PredioVisualData({
     required this.predio,
     required this.color,
@@ -2838,5 +3239,122 @@ class _PredioVisualData {
     required this.markerPoint,
   });
 }
-
-
+/// Pintor personalizado para dibujar una flecha de brújula.
+class _CompassArrowPainter extends CustomPainter {
+  final Color color;
+  _CompassArrowPainter({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final path = ui.Path();
+    // Flecha pointing up
+    path.moveTo(size.width / 2, 0);
+    path.lineTo(size.width, size.height);
+    path.lineTo(size.width / 2, size.height * 0.7);
+    path.lineTo(0, size.height);
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+  @override
+  bool shouldRepaint(covariant _CompassArrowPainter oldDelegate) {
+    return color != oldDelegate.color;
+  }
+}
+/// Pintor personalizado para dibujar una estrella de 8 puntas (rosa de los vientos).
+class _EightPointStarPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final centerX = size.width / 2;
+    final centerY = size.height / 2;
+    final outerRadius = size.width / 2 - 2;
+    final innerRadius = outerRadius * 0.4;
+    // Color para los puntos cardinales (N, E, S, W) - rojo
+    final cardinalPaint = Paint()
+      ..color = const Color(0xFFD63A3A)
+      ..style = PaintingStyle.fill;
+    // Color para los puntos intercardinales (NE, SE, SW, NW) - gris
+    final intercardinalPaint = Paint()
+      ..color = const Color(0xFF666666)
+      ..style = PaintingStyle.fill;
+    // Dibujar triángulos para los puntos cardinales
+    for (int i = 0; i < 4; i++) {
+      final angle = (i * 90 - 90) * math.pi / 180;
+      final nextAngle = ((i + 1) * 90 - 90) * math.pi / 180;
+      
+      final tipX = centerX + outerRadius * math.cos(angle);
+      final tipY = centerY + outerRadius * math.sin(angle);
+      
+      final leftX = centerX + innerRadius * math.cos(angle - math.pi / 6);
+      final leftY = centerY + innerRadius * math.sin(angle - math.pi / 6);
+      
+      final rightX = centerX + innerRadius * math.cos(angle + math.pi / 6);
+      final rightY = centerY + innerRadius * math.sin(angle + math.pi / 6);
+      final path = ui.Path()
+        ..moveTo(tipX, tipY)
+        ..lineTo(leftX, leftY)
+        ..lineTo(rightX, rightY)
+        ..close();
+      canvas.drawPath(path, cardinalPaint);
+    }
+    // Dibujar triángulos más pequeños para los puntos intercardinales
+    for (int i = 0; i < 4; i++) {
+      final angle = (i * 90 + 45 - 90) * math.pi / 180;
+      
+      final tipX = centerX + innerRadius * math.cos(angle);
+      final tipY = centerY + innerRadius * math.sin(angle);
+      
+      final leftX = centerX + (innerRadius * 0.5) * math.cos(angle - math.pi / 6);
+      final leftY = centerY + (innerRadius * 0.5) * math.sin(angle - math.pi / 6);
+      
+      final rightX = centerX + (innerRadius * 0.5) * math.cos(angle + math.pi / 6);
+      final rightY = centerY + (innerRadius * 0.5) * math.sin(angle + math.pi / 6);
+      final path = ui.Path()
+        ..moveTo(tipX, tipY)
+        ..lineTo(leftX, leftY)
+        ..lineTo(rightX, rightY)
+        ..close();
+      canvas.drawPath(path, intercardinalPaint);
+    }
+    // Centro de la brújula
+    final centerPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    
+    canvas.drawCircle(Offset(centerX, centerY), 3, centerPaint);
+    // Borde del centro
+    final centerBorderPaint = Paint()
+      ..color = const Color(0xFFD63A3A)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    
+    canvas.drawCircle(Offset(centerX, centerY), 3, centerBorderPaint);
+    // Dibujar letras N, E, S, W
+    final textStyle = ui.TextStyle(
+      color: const Color(0xFFD63A3A),
+      fontSize: 9,
+      fontWeight: FontWeight.bold,
+    );
+    // N - Norte
+    _drawText(canvas, 'N', centerX, 4, textStyle);
+    // S - Sur
+    _drawText(canvas, 'S', centerX, size.height - 2, textStyle);
+    // E - Este
+    _drawText(canvas, 'E', size.width - 2, centerY + 2, textStyle);
+    // W - Oeste
+    _drawText(canvas, 'W', 2, centerY + 2, textStyle);
+  }
+  void _drawText(Canvas canvas, String text, double x, double y, ui.TextStyle style) {
+    final paragraphBuilder = ui.ParagraphBuilder(ui.ParagraphStyle(
+      textAlign: TextAlign.center,
+    ))
+      ..pushStyle(style)
+      ..addText(text);
+    final paragraph = paragraphBuilder.build()
+      ..layout(const ui.ParagraphConstraints(width: 16));
+    canvas.drawParagraph(paragraph, Offset(x - 8, y - 4));
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}

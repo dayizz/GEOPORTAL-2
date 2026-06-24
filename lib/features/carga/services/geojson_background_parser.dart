@@ -83,68 +83,84 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
       .replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_')
       .toUpperCase();
 
-  final enrichedFeatures = <Map<String, dynamic>>[];
-  for (var i = 0; i < features.length; i++) {
-    final fmap = _asStringDynamicMap(features[i]);
-    if (fmap == null) continue;
+  // Predefinir listas para búsqueda rápida (más eficiente que sets para loops pequeños)
+  const claveKeys = <String>[
+    'clave_catastral',
+    'CLAVE_CATASTRAL',
+    'id_catastral',
+    'ID_CATASTRAL',
+    'clave',
+    'CLAVE',
+    'folio',
+    'FOLIO',
+    'id_sedatu',
+    'ID_SEDATU',
+    'id_predio',
+    'ID_PREDIO',
+    'cvegeo',
+    'CVEGEO',
+    'id',
+    'ID',
+    'fid',
+    'FID',
+    'gid',
+    'GID',
+  ];
+  const superficieKeys = <String>[
+    'superficie',
+    'SUPERFICIE',
+    'area',
+    'AREA',
+    'shape_area',
+    'SHAPE_AREA',
+    'area_m2',
+  ];
 
-    final props = _asStringDynamicMap(fmap['properties']) ?? <String, dynamic>{};
+  // Procesamiento optimizado con map
+  final enrichedFeatures = features.map((f) {
+    final fmap = _asStringDynamicMap(f);
+    if (fmap == null) return null;
+
+    final props = _asStringDynamicMap(fmap['properties']) ?? {};
     final geometry = _asStringDynamicMap(fmap['geometry']);
 
-    final claveActual = _pickVal(props, const [
-      'clave_catastral',
-      'CLAVE_CATASTRAL',
-      'id_catastral',
-      'ID_CATASTRAL',
-      'clave',
-      'CLAVE',
-      'folio',
-      'FOLIO',
-      'id_sedatu',
-      'ID_SEDATU',
-      'id_predio',
-      'ID_PREDIO',
-      'cvegeo',
-      'CVEGEO',
-      'id',
-      'ID',
-      'fid',
-      'FID',
-      'gid',
-      'GID',
-    ]);
+    // Búsqueda optimizada de clave
+    String? claveFinal;
+    for (final key in claveKeys) {
+      final val = props[key]?.toString().trim();
+      if (val != null && val.isNotEmpty) {
+        claveFinal = val;
+        break;
+      }
+    }
 
-    final claveFinal =
-        claveActual ?? '$nombreBase-${(i + 1).toString().padLeft(4, '0')}';
-    final superficieExistente = _toDouble(
-      props['superficie'] ??
-          props['SUPERFICIE'] ??
-          props['area'] ??
-          props['AREA'] ??
-          props['shape_area'] ??
-          props['SHAPE_AREA'] ??
-          props['area_m2'],
-    );
-    final superficieQgis = superficieExistente ?? 0;
+    // Búsqueda optimizada de superficie
+    double superficieQgis = 0;
+    for (final key in superficieKeys) {
+      final val = _toDouble(props[key]);
+      if (val != null) {
+        superficieQgis = val;
+        break;
+      }
+    }
 
-    final propsEnriched = Map<String, dynamic>.from(props)
-      ..['clave_catastral'] =
-          ((props['clave_catastral']?.toString().trim().isNotEmpty ?? false)
-              ? props['clave_catastral']
-              : claveFinal)
-      ..['id_sedatu'] =
-          ((props['id_sedatu']?.toString().trim().isNotEmpty ?? false)
-              ? props['id_sedatu']
-              : claveFinal)
-      ..['superficie'] = superficieQgis
-      ..['area_m2'] = superficieQgis;
+    // Crear enriched properties
+    final propsEnriched = <String, dynamic>{
+      ...props,
+      'clave_catastral': claveFinal ?? '',
+      'id_sedatu': props['id_sedatu']?.toString().trim().isNotEmpty == true
+          ? props['id_sedatu']
+          : '',
+      'superficie': superficieQgis,
+      'area_m2': superficieQgis,
+    };
 
-    enrichedFeatures.add({
+    return {
       ...fmap,
       'properties': propsEnriched,
       'geometry': geometry,
-    });
-  }
+    };
+  }).whereType<Map<String, dynamic>>().toList();
 
   const aliasProyecto = [
     'proyecto',

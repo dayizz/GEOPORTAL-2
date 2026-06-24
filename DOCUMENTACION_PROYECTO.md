@@ -196,6 +196,106 @@ Este proyecto implementa un geoportal operativo para gestión de predios:
 
 ## 9. Mejoras recomendadas en importación GeoJSON y vínculo Mapa-BD
 
+## 10. Convenciones y prácticas de desarrollo
+
+### 10.1 Estructura del proyecto
+
+```
+lib/
+├── main.dart                    # Punto de entrada
+├── app.dart                    # Configuración de la app (tema, router)
+├── core/                       # Configuración global
+│   ├── api/                    # Cliente HTTP
+│   ├── constants/             # Constantes (colores, strings)
+│   ├── google_sheets/         # Integración Google Sheets
+│   ├── router/               # Configuración de rutas
+│   ├── supabase/             # Configuración Supabase
+│   └── theme/                # Tema visual
+├── features/                  # Módulos de funcionalidad
+│   ├── auth/                 # Autenticación
+│   ├── carga/                # Carga de archivos
+│   ├── estructura/            # Estructura de predios
+│   ├── mapa/                # Mapa geográfico
+│   ├── perfil/              # Perfil de usuario
+│   ├── predios/             # Gestión de predios
+│   ├── propietarios/        # Propietarios
+│   ├── reportes/           # Reportes y balance
+│   └── tabla/              # Vista tabular
+├── shared/                    # Componentes compartidos
+│   ├── services/            # Servicios reutilizables
+│   └── widgets/             # Widgets comunes
+```
+
+### 10.2 Convenciones de código
+
+**Nombres:**
+- Clases: `CamelCase` (ej. `PrediosRepository`)
+- Constantes: `snake_case_uppercase` (ej. `MAX_CONCURRENCY`)
+- Funciones/variables: `camelCase` (ej. `sincronizarPredios`)
+- Archivos: `snake_case.dart` (ej. `predios_repository.dart`)
+
+**Arquitectura de estado:**
+- Usar **Riverpod** para gestión de estado
+- Providers en archivos independientes con sufijo `_provider.dart`
+- Notificadores para estado mutable
+- Providers de solo lectura para datos
+
+**Patrones:**
+- **Repository Pattern**: Abstraer acceso a datos
+- **Service Layer**: Lógica de negocio en servicios
+- **Feature-based**: Agrupar por funcionalidad
+
+### 10.3 Documentación de código
+
+**Comandos útiles:**
+- `dart analyze` - Análisis estático
+- `flutter test` - Ejecutar pruebas
+- `flutter build web` - Compilar para web
+
+**Comentarios:**
+- Usar `///` para documentación de API pública
+- Explicar el "por qué", no el "qué"
+- Incluir ejemplos para funciones complejas
+
+### 10.4 Servicios clave
+
+**SincronizacionService** (`lib/features/carga/services/sincronizacion_service.dart`):
+- `sincronizar(features)`: Sincroniza predios GeoJSON contra BD
+- Parámetros:
+  - `features`: Lista de features GeoJSON
+  - `concurrency`: Operaciones paralelas (default: 25)
+  - `onProgress`: Callback de progreso
+
+**GeoJsonMapper** (`lib/features/carga/utils/geojson_mapper.dart`):
+- `normalizeProperties(props)`: Normaliza claves de propiedades
+- `detectarProyecto(props)`: Detecta proyecto desde propiedades
+- `inferirProyectoDesdeClave(clave)`: Infiere proyecto desde clave
+
+### 10.5 Configuración de rendimiento
+
+```dart
+// En sincronizacion_service.dart
+static const int _defaultSyncConcurrency = 25;  // Operaciones paralelas
+static const int _maxSyncConcurrency = 30;     // Máximo paralelo
+static const int _maxRetryAttempts = 3;            // Reintentos en error
+static const int _baseRetryDelayMs = 300;         // Delay inicial (ms)
+```
+
+### 10.6 Solución de problemas comunes
+
+**Error: "No MediaQuery widget ancestor"**
+- Solución: Envolver widgets en `MediaQuery` o usar `LayoutBuilder`
+
+**Carga lenta de archivos**
+- Verificar concurrency en `SincronizacionService`
+- Reducir reintentos y delays
+
+**Datos desactualizados en Balance**
+- Refrescar provider en `initState()` y `didChangeDependencies()`
+
+**Selección de captura no funciona**
+- Agregar `behavior: HitTestBehavior.translucent` al `GestureDetector`
+
 1. Rendimiento de sincronización
 - Evitar consultas repetidas por la misma clave catastral durante una importación masiva.
 - Aplicar caché por lote (clave catastral -> predio) para reducir roundtrips.

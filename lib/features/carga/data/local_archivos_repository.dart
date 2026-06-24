@@ -36,13 +36,12 @@ class LocalArchivosRepository {
     final existing = await getArchivos();
     final now = DateTime.now().toIso8601String();
     final id = _uuid.v4();
-    // Guardar máximo 20 features para no saturar localStorage
-    final storedFeatures = features.length > 20 ? features.sublist(0, 20) : features;
+    // Guardar todos los features (sin límite) para permitir archivos grandes
     final entry = <String, dynamic>{
       'id': id,
       'nombre': nombre,
       'features_count': rowCount ?? features.length,
-      'features': storedFeatures,
+      'features': features,
       'sincronizado': sincronizado,
       'encontrados': encontrados,
       'creados': creados,

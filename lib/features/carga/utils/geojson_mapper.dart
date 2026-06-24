@@ -32,6 +32,18 @@ class GeoJsonMapper {
       'tramo', 'TRAMO',
       'tramo_vial', 'TRAMO_VIAL',
       'seccion', 'SECCION',
+      'frente', 'FRENTE',
+      'segmento', 'SEGMENTO',
+      't_f_s', 'T_F_S',
+      'tipofs', 'TIPO_FS',
+    ],
+    'frente': [
+      'frente', 'FRENTE',
+      'frente_', 'FRENTE_',
+    ],
+    'segmento': [
+      'segmento', 'SEGMENTO',
+      'num_segmento', 'NUM_SEGMENTO',
     ],
     'tipo_propiedad': [
       'tipo_propiedad', 'TIPO_PROPIEDAD',
@@ -52,9 +64,11 @@ class GeoJsonMapper {
     ],
     'superficie': [
       'superficie', 'SUPERFICIE',
-      'area', 'AREA',
-      'shape_area', 'SHAPE_AREA',
-      'area_m2', 'area_ha',
+      'area', 'AREA', 'Area', 'AREA_M2', 'area_m2',
+      'shape_area', 'SHAPE_AREA', 'Shape_Area',
+      'area_ha', 'AREA_HA',
+      'superficie_m2', 'SUPERFICIE_M2',
+      'm2', 'M2',
     ],
     'uso_suelo': [
       'uso_suelo', 'USO_SUELO',
@@ -93,11 +107,43 @@ class GeoJsonMapper {
       'municipio', 'MUNICIPIO',
       'mun', 'MUN',
       'municipality', 'MUNICIPALITY',
+      'localidad', 'LOCALIDAD',
+      'ciudad', 'CIUDAD',
     ],
     'estado': [
       'estado', 'ESTADO',
       'entidad', 'ENTIDAD',
       'state', 'STATE',
+      'nombre_entidad', 'NOMBRE_ENTIDAD',
+    ],
+    // Status de liberación (COP)
+    'cop': [
+      'cop', 'COP',
+      'status', 'STATUS', 'estatus', 'ESTATUS',
+      'liberado', 'LIBERADO',
+      'liberada', 'LIBERADA',
+      'firmado', 'FIRMADO',
+      'cop_firmado', 'COP_FIRMADO',
+      'estatus_liberacion', 'ESTATUS_LIBERACION',
+    ],
+    // Campos booleanos de gestión
+    'identificacion': [
+      'identificacion', 'IDENTIFICACION',
+      'identificado', 'IDENTIFICADO',
+      'id_status', 'ID_STATUS',
+      'identificacion_', 'IDENTIFICACION_',
+    ],
+    'levantamiento': [
+      'levantamiento', 'LEVANTAMIENTO',
+      'levantado', 'LEVANTADO',
+      'levantamiento_', 'LEVANTAMIENTO_',
+      'lev_status', 'LEV_STATUS',
+    ],
+    'negociacion': [
+      'negociacion', 'NEGOCIACION',
+      'negociado', 'NEGOCIADO',
+      'negociacion_', 'NEGOCIACION_',
+      'neg_status', 'NEG_STATUS',
     ],
     'codigo_postal': [
       'codigo_postal', 'CODIGO_POSTAL',
@@ -111,16 +157,25 @@ class GeoJsonMapper {
     'km_inicio': [
       'km_inicio', 'KM_INICIO',
       'cadenamiento_inicial', 'cad_ini', 'km_i',
+      'km_ini', 'KM_INI', 'km_inicio', 'KM_INICIO',
+      'cadenamiento_i', 'CADENAMIENTO_I', 'km0', 'KM0',
     ],
     'km_fin': [
       'km_fin', 'KM_FIN',
       'cadenamiento_final', 'cad_fin', 'km_f',
+      'km_fin', 'KM_FIN', 'cadenamiento_f', 'CADENAMIENTO_F',
+      'km1', 'KM1', 'cadenamiento_1',
     ],
     'km_lineales': [
       'km_lineales', 'KM_LINEALES',
-      'longitud_km', 'longitud',
+      'longitud_km', 'longitud', 'km', 'KM',
+      'longitud_km', 'LONGITUD_KM', 'km_lineal', 'KM_LINEAL',
     ],
-    'km_efectivos': ['km_efectivos', 'KM_EFECTIVOS'],
+    'km_efectivos': [
+      'km_efectivos', 'KM_EFECTIVOS',
+      'km_efectivo', 'KM_EFECTIVO',
+      'km_e', 'KM_E', 'kme',
+    ],
     'latitud':  ['latitud', 'lat', 'LAT', 'latitude'],
     'longitud': ['longitud', 'lon', 'lng', 'LON', 'longitude'],
     'rfc':  ['rfc', 'RFC'],
@@ -227,6 +282,17 @@ class GeoJsonMapper {
   }
 
   static dynamic _normalizeCanonicalValue(String key, dynamic value) {
+    // Si ya es boolean, devolverlo directo
+    if (value is bool) return value;
+    
+    // Si es numérico (1, 0), convertir a boolean para campos booleanos
+    if (value is num) {
+      if (_booleanKeys.contains(key)) {
+        return value != 0;
+      }
+      return value;
+    }
+    
     if (value is! String) return value;
     final text = _normalizeSpaces(value);
 
@@ -241,9 +307,59 @@ class GeoJsonMapper {
         return _normalizeProyecto(text);
       case 'tipo_propiedad':
         return _normalizeTipoPropiedad(text);
+      // Para campos booleanos, convertir strings a boolean
+      case 'identificacion':
+      case 'levantamiento':
+      case 'negociacion':
+      case 'cop':
+        return _normalizeBoolean(text);
+      // Para campos numéricos, convertir strings a double
+      case 'superficie':
+      case 'km_inicio':
+      case 'km_fin':
+      case 'km_lineales':
+      case 'km_efectivos':
+      case 'valor_catastral':
+      case 'latitud':
+      case 'longitud':
+        return _toDouble(text);
       default:
         return text;
     }
+  }
+
+  /// Convierte strings a double para campos numéricos
+  static double? _toDouble(String value) {
+    if (value.isEmpty) return null;
+    final cleaned = value.replaceAll(',', '').trim();
+    return double.tryParse(cleaned);
+  }
+
+  /// Keys que deben convertirse a boolean
+  static const _booleanKeys = {
+    'identificacion',
+    'levantamiento',
+    'negociacion',
+    'cop',
+    'poligono_insertado',
+  };
+
+  /// Convierte strings a boolean para campos de status
+  static bool _normalizeBoolean(String value) {
+    final upper = value.toUpperCase().trim();
+    // Valores que se consideran "true"
+    if (upper == 'SI' || upper == 'YES' || upper == 'S' || upper == 'Y' || 
+        upper == 'TRUE' || upper == '1' || upper == 'X' ||
+        upper == 'COMPLETADO' || upper == 'COMPLETE' || 
+        upper == 'LIBERADO' || upper == 'LIBERADA' ||
+        upper == 'IDENTIFICADO' || upper == 'LEVANTADO' || upper == 'NEGOCIADO') {
+      return true;
+    }
+    // Valores que se consideran "false"
+    if (upper == 'NO' || upper == 'FALSE' || upper == '0' || upper == '-' || upper.isEmpty) {
+      return false;
+    }
+    return false;
   }
 
   static String _normalizeSpaces(String value) {

@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:excel/excel.dart' hide Border;
+import 'package:share_plus/share_plus.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'dart:html' as html;
 import '../../../shared/widgets/app_scaffold.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../mapa/providers/mapa_provider.dart';
@@ -298,8 +304,116 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
     return AppScaffold(
       currentIndex: 3,
       title: 'Gestion',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.download),
+          tooltip: 'Exportar a Excel',
+          onPressed: () {
+            final prediosAsync = ref.read(prediosListProvider);
+            final prediosList = prediosAsync.asData?.value ?? [];
+            final allPredios = prediosList.map((p) => _prediosOptimistas[p.id] ?? p).toList();
+            final filtered = _applyFilters(allPredios);
+            _exportToExcel(filtered);
+          },
+        ),
+      ],
       child: content,
     );
+  }
+
+  Future<void> _exportToExcel(List<Predio> predios) async {
+    if (predios.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No hay datos para exportar')),
+      );
+      return;
+    }
+
+    try {
+      final excel = Excel.createExcel();
+      final sheet = excel['Gestion $_proyectoActual'];
+      
+      // Headers
+      final headers = [
+        'CLAVE', 'PROYECTO', 'T/F/S', 'TIPO', 'ESTADO', 'MUNICIPIO', 
+        'EJIDO', 'PROPIETARIO', 'KM INICIO', 'KM FIN', 'KM EFECTIVOS',
+        'SUPERFICIE M2', 'COP', 'FECHA COP', 'ESTATUS', 'OFICIO',
+        'IDENTIFICACION', 'LEVANTAMIENTO', 'NEGOCIACION', 'OBSERVACIONES'
+      ];
+      
+      for (var i = 0; i < headers.length; i++) {
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0)).value = TextCellValue(headers[i]);
+      }
+      
+      // Data rows
+      for (var row = 0; row < predios.length; row++) {
+        final p = predios[row];
+        final rowData = [
+          p.claveCatastral,
+          _predioProyecto(p),
+          p.tramo,
+          p.tipoPropiedad,
+          p.estado ?? '',
+          p.municipio ?? '',
+          p.ejido ?? '',
+          p.propietarioNombre ?? '',
+          p.kmInicio?.toString() ?? '',
+          p.kmFin?.toString() ?? '',
+          p.kmEfectivos?.toString() ?? '',
+          p.superficie?.toString() ?? '',
+          p.cop ? 'SI' : 'NO',
+          p.copFecha != null ? '${p.copFecha!.day}/${p.copFecha!.month}/${p.copFecha!.year}' : '',
+          p.cop ? 'Liberado' : 'No liberado',
+          p.oficio ?? '',
+          p.identificacion ? 'SI' : 'NO',
+          p.levantamiento ? 'SI' : 'NO',
+          p.negociacion ? 'SI' : 'NO',
+          p.situacionSocial ?? '',
+        ];
+        
+        for (var col = 0; col < rowData.length; col++) {
+          sheet.cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row + 1)).value = TextCellValue(rowData[col].toString());
+        }
+      }
+      
+      final bytes = excel.encode();
+      if (bytes == null) {
+        throw Exception('Error al codificar Excel');
+      }
+      
+      // Para web, usar una solución diferente
+      if (kIsWeb) {
+        // En web, crear un blob y descargar directamente usando dart:html
+        final blob = html.Blob([bytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute('download', 'gestion_${_proyectoActual}_${DateTime.now().millisecondsSinceEpoch}.xlsx')
+          ..click();
+        html.Url.revokeObjectUrl(url);
+      } else {
+        // Para mobile/desktop, usar el método original
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/gestion_${_proyectoActual}_${DateTime.now().millisecondsSinceEpoch}.xlsx');
+        await file.writeAsBytes(bytes);
+        
+        await Share.shareXFiles(
+          [XFile(file.path)],
+          text: 'Exportación de Gestión $_proyectoActual',
+        );
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Exportados ${predios.length} registros')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al exportar: $e'), backgroundColor: AppColors.danger),
+        );
+      }
+    }
   }
 
   Widget _buildTopBar(int visible, List<Predio> allPredios) {
@@ -514,30 +628,30 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
        44, // ACCIONES
        55, // VER MAPA
       180, // CLAVE
-      50, // T/F/S
+       50, // T/F/S
        90, // TIPO
       130, // ESTADO / MUNICIPIO
       120, // EJIDO
+      150, // PROPIETARIOS
        72, // KM INICIO
        72, // KM FIN
-       72, // KM LIN
        72, // KM EF
        80, // M²
        46, // COP
-      92, // FECHA
+       92, // FECHA
        90, // ESTATUS
       130, // OFICIO
        54, // IDENT.
        54, // LEVANT.
        54, // NEGOC.
-      130, // SIT. SOCIAL
+      150, // OBSERVACIONES
     ];
 
     const headers = <String>[
-      '', 'MAPA', 'CLAVE', 'T/F/S', 'TIPO', 'ESTADO /\nMUNICIPIO', 'EJIDO',
-      'KM INICIO', 'KM FIN', 'KM LIN', 'KM EF', 'M²',
+      '', 'MAPA', 'CLAVE', 'T/F/S', 'TIPO', 'ESTADO /\nMUNICIPIO', 'EJIDO', 'PROPIETARIOS',
+      'KM INICIO', 'KM FIN', 'KM EF', 'M²',
       'COP/DOT', 'FECHA', 'ESTATUS', 'OFICIO',
-      'IDENT.', 'LEVANT.', 'NEGOC.', 'SITUACION SOCIAL',
+      'IDENT.', 'LEVANT.', 'NEGOC.', 'OBSERVACIONES',
     ];
 
     return LayoutBuilder(
@@ -771,12 +885,12 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           _dataCell(estadoMunicipio.isEmpty ? '-' : estadoMunicipio, widths[5]),
           // EJIDO
           _dataCell(p.ejido ?? '-', widths[6]),
+          // PROPIETARIOS
+          _dataCell(p.propietarioNombre ?? '-', widths[7]),
           // KM INICIO
-          _numCell(p.kmInicio, widths[7], decimals: 4),
+          _numCell(p.kmInicio, widths[8], decimals: 4),
           // KM FIN
-          _numCell(p.kmFin, widths[8], decimals: 4),
-          // KM LIN
-          _numCell(p.kmLineales, widths[9], decimals: 4),
+          _numCell(p.kmFin, widths[9], decimals: 4),
           // KM EF
           _numCell(p.kmEfectivos, widths[10], decimals: 4),
           // M²
@@ -822,7 +936,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
               ),
             ),
           ),
-          // SITUACION SOCIAL
+          // OBSERVACIONES (antes situacion social)
           _dataCell(p.situacionSocial ?? '-', widths[19]),
         ],
       ),

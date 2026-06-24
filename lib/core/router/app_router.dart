@@ -11,10 +11,13 @@ import '../../features/predios/presentation/proyectos_screen.dart';
 import '../../features/propietarios/presentation/propietarios_list_screen.dart';
 import '../../features/propietarios/presentation/propietario_form_screen.dart';
 import '../../features/propietarios/presentation/propietario_detail_screen.dart';
-import '../../features/reportes/presentation/reportes_screen.dart';
+import '../../features/reportes/presentation/balance_screen.dart';
+import '../../features/reportes/presentation/generar_reporte_screen.dart';
 import '../../features/carga/presentation/carga_archivo_screen.dart';
 import '../../features/tabla/presentation/tabla_screen.dart';
 import '../../features/tabla/presentation/gestion_predio_detail_screen.dart';
+import '../../features/perfil/presentation/perfil_screen.dart';
+import '../../features/estructura/presentation/estructura_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Observar cambios de auth para refrescar el redirect
@@ -95,8 +98,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/reportes',
         pageBuilder: (_, __) => const NoTransitionPage(
-          child: ReportesScreen(),
+          child: GenerarReporteScreen(),
         ),
+      ),
+      GoRoute(
+        path: '/balance',
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: BalanceScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/balance/generar',
+        redirect: (_, __) => '/reportes',
       ),
       GoRoute(
         path: '/carga',
@@ -121,6 +134,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/proyectos',
         builder: (_, __) => const ProyectosScreen(),
+      ),
+      GoRoute(
+        path: '/perfil',
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: PerfilScreen(),
+        ),
+      ),
+      GoRoute(
+        path: '/estructura',
+        pageBuilder: (_, __) => const NoTransitionPage(
+          child: EstructuraScreen(),
+        ),
       ),
     ],
   );
