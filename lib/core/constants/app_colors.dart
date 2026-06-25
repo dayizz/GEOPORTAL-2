@@ -58,6 +58,9 @@ class AppColors {
   static const Color tipoSinTipo = Color(0xFF6D6D6D);      // gris
   static const Color tipoSocial = Color(0xFF7E57C2);       // purpura
   static const Color tipoPrivada = Color(0xFFF57C00);      // naranja
+  static const Color tipoDominioPleno = Color(0xFF26A69A);  // teal
+  static const Color tipoEjidal = Color(0xFF5C6BC0);       // indigo
+  static const Color tipoMixto = Color(0xFFEC407A);        // pink
 
   static Color tipoPropiedadColor(String tipo) {
     switch (tipo.toUpperCase()) {
@@ -67,6 +70,12 @@ class AppColors {
         return tipoSocial;
       case 'PRIVADA':
         return tipoPrivada;
+      case 'DOMINIO PLENO':
+        return tipoDominioPleno;
+      case 'EJIDAL':
+        return tipoEjidal;
+      case 'MIXTO':
+        return tipoMixto;
       default:
         return tipoSinTipo;
     }

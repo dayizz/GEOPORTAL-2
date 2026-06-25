@@ -290,7 +290,7 @@ class SincronizacionService {
       props['SHAPE_AREA'] ?? props['area_ha'] ?? props['area_m2'] ??
       props['superficie_m2'] ?? props['m2'] ?? props['Area'] ??
       (propsOriginal != null ? propsOriginal['m2'] : null),
-    ) ?? 0;
+    ) ;
 
     // Extraer km_inicio con más aliases
     final kmInicio = _toDouble(
@@ -299,7 +299,7 @@ class SincronizacionService {
       props['km_ini'] ?? props['km0'] ?? props['cadenamiento_i'] ??
       (propsOriginal != null ? propsOriginal['km_inicio'] : null) ??
       (propsOriginal != null ? propsOriginal['KM_INICIO'] : null),
-    ) ?? 0;
+    ) ;
 
     // Extraer km_fin con más aliases
     final kmFin = _toDouble(
@@ -308,12 +308,12 @@ class SincronizacionService {
       props['km1'] ?? props['cadenamiento_f'] ?? props['cadenamiento_1'] ??
       (propsOriginal != null ? propsOriginal['km_fin'] : null) ??
       (propsOriginal != null ? propsOriginal['KM_FIN'] : null),
-    ) ?? 0;
+    ) ;
 
     final kmLineales = _toDouble(
       props['km_lineales'] ?? props['KM_LINEALES'] ??
       props['longitud_km'] ?? props['longitud'] ?? props['km'],
-    ) ?? 0;
+    ) ;
 
     // Extraer km_efectivos con más aliases
     final kmEfectivos = _toDouble(
@@ -321,12 +321,12 @@ class SincronizacionService {
       props['km_efectivo'] ?? props['km_e'] ??
       (propsOriginal != null ? propsOriginal['km_efectivos'] : null) ??
       (propsOriginal != null ? propsOriginal['KM_EFECTIVOS'] : null),
-    ) ?? 0;
+    ) ;
 
     final valorCatastral = _toDouble(
       props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ??
       props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO'],
-    ) ?? 0;
+    ) ;
 
     final data = <String, dynamic>{
       // ── Identificación ──────────────────────────────────────────────────
@@ -517,7 +517,7 @@ class SincronizacionService {
     trySet('superficie',    _toDouble(props['superficie']    ?? props['SUPERFICIE']    ?? props['area'] ?? props['AREA'] ?? props['shape_area'] ?? props['SHAPE_AREA'] ?? props['superficie_m2'] ?? props['m2'] ?? props['Area']));
     trySet('uso_suelo',     _pick(props, ['uso_suelo', 'USO_SUELO', 'uso', 'USO', 'land_use', 'LAND_USE']) ?? 'Otro');
     trySet('zona',          _pick(props, ['zona', 'ZONA', 'sector', 'SECTOR', 'region', 'REGION']));
-    trySet('valor_catastral', _toDouble(props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ?? props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO']) ?? 0);
+    trySet('valor_catastral', _toDouble(props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ?? props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO']) ;
     trySet('descripcion',   _pick(props, ['descripcion', 'DESCRIPCION', 'description', 'DESCRIPTION']));
     trySet('direccion',     _pick(props, ['direccion', 'DIRECCION', 'domicilio', 'DOMICILIO', 'calle', 'CALLE']));
     trySet('colonia',       _pick(props, ['colonia', 'COLONIA', 'barrio', 'BARRIO']));

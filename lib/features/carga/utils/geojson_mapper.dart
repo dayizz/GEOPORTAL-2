@@ -376,6 +376,9 @@ class GeoJsonMapper {
     final upper = value.toUpperCase();
     if (upper.contains('SOC')) return 'SOCIAL';
     if (upper.contains('PRI')) return 'PRIVADA';
+    if (upper.contains('DOMINIO') || upper.contains('PLENO')) return 'DOMINIO PLENO';
+    if (upper.contains('EJI')) return 'EJIDAL';
+    if (upper.contains('MIX')) return 'MIXTO';
     return upper;
   }
 

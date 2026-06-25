@@ -116,6 +116,26 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
     'area_m2',
   ];
 
+
+  const kmInicioKeys = <String>[
+    'km_inicio',
+    'KM_INICIO',
+    'cadenamiento_inicial',
+    'km_i',
+    'km0',
+  ];
+  const kmFinKeys = <String>[
+    'km_fin',
+    'KM_FIN',
+    'cadenamiento_final',
+    'km_f',
+    'km1',
+  ];
+  const kmEfectivosKeys = <String>[
+    'km_efectivos',
+    'KM_EFECTIVOS',
+    'km_efectivo',
+  ];
   // Procesamiento optimizado con map
   final enrichedFeatures = features.map((f) {
     final fmap = _asStringDynamicMap(f);
@@ -152,6 +172,9 @@ Map<String, dynamic> _parseGeoJsonPayload(Map<String, dynamic> request) {
           ? props['id_sedatu']
           : '',
       'superficie': superficieQgis,
+      'km_inicio': kmInicio,
+      'km_fin': kmFin,
+      'km_efectivos': kmEfectivos,
       'area_m2': superficieQgis,
     };
 

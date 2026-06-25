@@ -212,8 +212,22 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                   initialCenter: _defaultCenter,
                   initialZoom: _defaultZoom,
                   interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.all & ~InteractiveFlag.none,
+                    flags: InteractiveFlag.all,
                   ),
+                  onPositionChanged: (position, hasGesture) {
+                    // Detectar rotación del mapa via scroll wheel o touchpad/dos dedos
+                    // Verificar siempre la rotación, no solo cuando hay gesto
+                    if (position.rotation != null) {
+                      final newRotation = position.rotation!;
+                      debugPrint('onPositionChanged: rotation=$newRotation, hasGesture=$hasGesture, current=$_currentRotation');
+                      // Actualizar si el cambio es significativo (> 0.5 grados)
+                      if ((newRotation - _currentRotation).abs() > 0.5) {
+                        setState(() {
+                          _currentRotation = newRotation;
+                        });
+                      }
+                    }
+                  },
                   onTap: (_, point) {
                     // Predios guardados en DB
                     final tappedVisual = _findVisualAtPoint(point, visuals);
@@ -253,31 +267,31 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                           _detectedAreaM2 = _calculateAreaSquareMeters(_draftPoints);
                           shouldAutofillUbicacion = true;
                           // ── Pre-rellenar formulario con datos del predio seleccionado ──
-                          final predio = tappedVisual.predio;
-                          final nombrePropOwner = predio.propietario != null
-                              ? predio.propietario!.nombreCompleto.trim()
-                              : predio.propietarioNombre?.trim() ?? '';
+                          final predicates = tappedVisual.predio;
+                          final nombrePropOwner = predicates.propietario != null
+                              ? predicates.propietario!.nombreCompleto.trim()
+                              : predicates.propietarioNombre?.trim() ?? '';
                           _propietarioCtrl.text = nombrePropOwner;
-                          _tramoCtrl.text = predio.tramo.trim();
-                          _kmInicioCtrl.text = predio.kmInicio != null
-                              ? _formatKm(predio.kmInicio!)
+                          _tramoCtrl.text = predicates.tramo.trim();
+                          _kmInicioCtrl.text = predicates.kmInicio != null
+                              ? _formatKm(predicates.kmInicio!)
                               : '0+000';
-                          _kmFinCtrl.text = predio.kmFin != null
-                              ? _formatKm(predio.kmFin!)
+                          _kmFinCtrl.text = predicates.kmFin != null
+                              ? _formatKm(predicates.kmFin!)
                               : '0+000';
-                          _tipoPropiedad = (predio.tipoPropiedad.trim().isNotEmpty &&
-                                  predio.tipoPropiedad != 'PRIVADA')
-                              ? predio.tipoPropiedad
-                              : predio.tipoPropiedad.trim().isNotEmpty
-                                  ? predio.tipoPropiedad
+                          _tipoPropiedad = (predicates.tipoPropiedad.trim().isNotEmpty &&
+                                  predicates.tipoPropiedad != 'PRIVADA')
+                              ? predicates.tipoPropiedad
+                              : predicates.tipoPropiedad.trim().isNotEmpty
+                                  ? predicates.tipoPropiedad
                                   : null;
-                          _proyecto = _normalizeProyecto(predio.proyecto) ??
+                          _proyecto = _normalizeProyecto(predicates.proyecto) ??
                               _inferProyectoFromText([
-                                predio.proyecto ?? '',
-                                predio.oficio ?? '',
-                                predio.copFirmado ?? '',
-                                predio.poligonoDwg ?? '',
-                                predio.claveCatastral,
+                                predicates.proyecto ?? '',
+                                predicates.oficio ?? '',
+                                predicates.copFirmado ?? '',
+                                predicates.poligonoDwg ?? '',
+                                predicates.claveCatastral,
                               ].join(' '));
                         }
                         return;
@@ -1803,7 +1817,7 @@ class _MapaScreenState extends ConsumerState<MapaScreen> {
                     label: 'Tipo de propiedad',
                     value: _tipoPropiedad,
                     placeholder: 'Sin tipo',
-                    options: const ['Sin tipo', 'SOCIAL', 'PRIVADA'],
+                    options: const ['Sin tipo', 'SOCIAL', 'PRIVADA', 'DOMINIO PLENO', 'EJIDAL', 'MIXTO'],
                     onChanged: (v) => setState(() => _tipoPropiedad = v),
                   ),
                 ),

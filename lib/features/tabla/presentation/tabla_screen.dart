@@ -1228,7 +1228,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
-                children: ['SOCIAL', 'DOMINIO PLENO', 'PRIVADA'].map((t) => FilterChip(
+                children: ['SOCIAL', 'DOMINIO PLENO', 'PRIVADA', 'EJIDAL', 'MIXTO'].map((t) => FilterChip(
                   label: Text(t),
                   selected: tipo == t,
                   onSelected: (v) => setS(() => tipo = v ? t : null),
