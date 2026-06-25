@@ -19,8 +19,8 @@ class ArchivosGeoJsonRepository {
       : _sheets = sheets;
 
   static const _uuid = Uuid();
-  static const int _sheetsMaxStoredFeatures = 40;
-  static const int _sheetsMaxStoredFeaturesBytes = 180000;
+  static const int _sheetsMaxStoredFeatures = 10000;
+  static const int _sheetsMaxStoredFeaturesBytes = 5000000;
 
   bool get _usingSheets => _sheets != null;
 

@@ -70,10 +70,10 @@ class _FeatureSyncOutcome {
 class SincronizacionService {
   final PrediosRepository _prediosRepo;
   final PropietariosRepository _propietariosRepo;
-  static const int _defaultSyncConcurrency = 25;
-  static const int _maxSyncConcurrency = 30;
-  static const int _maxRetryAttempts = 3;
-  static const int _baseRetryDelayMs = 300;
+  static const int _defaultSyncConcurrency = 50;
+  static const int _maxSyncConcurrency = 100;
+  static const int _maxRetryAttempts = 2;
+  static const int _baseRetryDelayMs = 100;
 
   SincronizacionService(this._prediosRepo, this._propietariosRepo);
 
