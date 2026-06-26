@@ -637,6 +637,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
        72, // KM FIN
        72, // KM EF
        80, // M²
+      120, // TIPO LIBERACION
        46, // COP
        92, // FECHA
        90, // ESTATUS
@@ -649,7 +650,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
 
     const headers = <String>[
       '', 'MAPA', 'CLAVE', 'T/F/S', 'TIPO', 'ESTADO /\nMUNICIPIO', 'EJIDO', 'PROPIETARIOS',
-      'KM INICIO', 'KM FIN', 'KM EF', 'M²',
+      'KM INICIO', 'KM FIN', 'KM EF', 'M²', 'TIPO\nLIBERACION',
       'COP/DOT', 'FECHA', 'ESTATUS', 'OFICIO',
       'IDENT.', 'LEVANT.', 'NEGOC.', 'OBSERVACIONES',
     ];
@@ -895,17 +896,19 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           _numCell(p.kmEfectivos, widths[10], decimals: 4),
           // M²
           _numCell(p.superficie, widths[11], decimals: 2),
+          // TIPO LIBERACION
+          _dataCell(p.tipoLiberacion ?? '-', widths[12]),
           // COP/DOT PDF (icono de estado)
-          _copPdfIndicatorCell(p, widths[12]),
+          _copPdfIndicatorCell(p, widths[13]),
           // FECHA COP/DOT
-          _dataCell(_copFechaLabel(p), widths[13]),
+          _dataCell(_copFechaLabel(p), widths[14]),
           // ESTATUS
-          _estatusCell(p, widths[14]),
+          _estatusCell(p, widths[15]),
           // OFICIO
-          _dataCell(p.oficio ?? '-', widths[15]),
+          _dataCell(p.oficio ?? '-', widths[16]),
           // IDENTIFICACION (tappable)
           _tappableBoolCell(
-            p.identificacion, widths[16],
+            p.identificacion, widths[17],
             onTap: () => _savePredio(
               p,
               p.copyWith(
@@ -916,7 +919,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           ),
           // LEVANTAMIENTO (tappable)
           _tappableBoolCell(
-            p.levantamiento, widths[17],
+            p.levantamiento, widths[18],
             onTap: () => _savePredio(
               p,
               p.copyWith(
@@ -927,7 +930,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
           ),
           // NEGOCIACION (tappable)
           _tappableBoolCell(
-            p.negociacion, widths[18],
+            p.negociacion, widths[19],
             onTap: () => _savePredio(
               p,
               p.copyWith(
@@ -937,7 +940,7 @@ class _TablaScreenState extends ConsumerState<TablaScreen> {
             ),
           ),
           // OBSERVACIONES (antes situacion social)
-          _dataCell(p.situacionSocial ?? '-', widths[19]),
+          _dataCell(p.situacionSocial ?? '-', widths[20]),
         ],
       ),
     );

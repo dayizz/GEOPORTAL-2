@@ -28,6 +28,7 @@ class Predio {
   final bool levantamiento;
   final bool negociacion;
   final String? situacionSocial;
+  final String? tipoLiberacion;
   final double? latitud;
   final double? longitud;
   final Map<String, dynamic>? geometry;
@@ -67,6 +68,7 @@ class Predio {
     this.levantamiento = false,
     this.negociacion = false,
     this.situacionSocial,
+    this.tipoLiberacion,
     this.latitud,
     this.longitud,
     this.geometry,
@@ -120,6 +122,7 @@ class Predio {
       levantamiento: map['levantamiento'] as bool? ?? false,
       negociacion: map['negociacion'] as bool? ?? false,
       situacionSocial: map['situacion_social'] as String?,
+      tipoLiberacion: map['tipo_liberacion'] as String?,
       latitud: (map['latitud'] as num?)?.toDouble(),
       longitud: (map['longitud'] as num?)?.toDouble(),
       geometry: geometry,
@@ -159,6 +162,7 @@ class Predio {
       'levantamiento': levantamiento,
       'negociacion': negociacion,
       'situacion_social': situacionSocial,
+      'tipo_liberacion': tipoLiberacion,
       'latitud': latitud,
       'longitud': longitud,
       'geometry': geometry,
@@ -207,6 +211,7 @@ class Predio {
     bool? levantamiento,
     bool? negociacion,
     String? situacionSocial,
+    String? tipoLiberacion,
     double? latitud,
     double? longitud,
     Map<String, dynamic>? geometry,
@@ -241,6 +246,7 @@ class Predio {
       levantamiento: levantamiento ?? this.levantamiento,
       negociacion: negociacion ?? this.negociacion,
       situacionSocial: situacionSocial ?? this.situacionSocial,
+      tipoLiberacion: tipoLiberacion ?? this.tipoLiberacion,
       latitud: latitud ?? this.latitud,
       longitud: longitud ?? this.longitud,
       geometry: geometry ?? this.geometry,

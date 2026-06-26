@@ -206,6 +206,12 @@ ALTER TABLE predios
   ADD COLUMN IF NOT EXISTS pdf_url            TEXT,
   ADD COLUMN IF NOT EXISTS cop_fecha          TIMESTAMPTZ;
 
+-- ============================================================
+-- 10c. MIGRACIÓN: Campo tipo_liberacion para gestión
+-- ============================================================
+ALTER TABLE predios
+  ADD COLUMN IF NOT EXISTS tipo_liberacion      TEXT;
+
 -- Índice para búsqueda por estado/municipio
 CREATE INDEX IF NOT EXISTS idx_predios_estado     ON predios(estado);
 CREATE INDEX IF NOT EXISTS idx_predios_municipio  ON predios(municipio);

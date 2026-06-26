@@ -338,10 +338,10 @@ class SincronizacionService {
         'frente', 'FRENTE', 'segmento', 'SEGMENTO',
         't_f_s', 'T_F_S', 'tipofs', 'TIPO_FS',
       ]) ?? 'T1',
-      'tipo_propiedad': _pick(props, [
+      'tipo_propiedad': _normalizeTipoPropiedad(_pick(props, [
         'tipo_propiedad', 'tipopropiedad', 'TIPO_PROPIEDAD',
         'tipo', 'TIPO', 'regimen', 'REGIMEN',
-      ]) ?? 'PRIVADA',
+      ])),
       'ejido': _pick(props, [
         'ejido', 'nom_ejido', 'nombre_ejido', 'NOM_EJIDO', 'EJIDO',
         'comunidad', 'localidad',
@@ -401,6 +401,15 @@ class SincronizacionService {
       'identificacion': _toBool(props['identificacion']),
       'levantamiento': _toBool(props['levantamiento']),
       'negociacion': _toBool(props['negociacion']),
+
+      // ── Tipo de Liberación ───────────────────────────────────────────────
+      'tipo_liberacion': _pick(props, [
+        'tipo_liberacion', 'TIPO_LIBERACION',
+        'tipo_de_liberacion', 'TIPO_DE_LIBERACION',
+        'liberacion', 'LIBERACION',
+        'tipo_release', 'TIPO_RELEASE',
+        'tipo', 'TIPO',
+      ]),
     };
 
     // Eliminar claves con valor null para no pisar datos existentes
@@ -490,6 +499,16 @@ class SincronizacionService {
     return false;
   }
 
+  /// Normaliza el valor de tipo_propiedad a los valores válidos del sistema
+  String? _normalizeTipoPropiedad(String? value) {
+    if (value == null) return 'PRIVADA';
+    final upper = value.toUpperCase().trim();
+    if (upper.contains('SOC')) return 'SOCIAL';
+    if (upper.contains('PRI')) return 'PRIVADA';
+    if (upper.contains('DOMINIO') || upper.contains('PLENO')) return 'DOMINIO PLENO';
+    return upper.isEmpty ? 'PRIVADA' : upper;
+  }
+
   /// Construye los campos de Gestión para ACTUALIZAR un predio existente.
   Map<String, dynamic> _buildGestionUpdateData(
     Map<String, dynamic> props,
@@ -507,7 +526,7 @@ class SincronizacionService {
     }
 
     trySet('tramo',      _pick(props, ['tramo', 'TRAMO', 'tramo_vial', 'seccion', 'SECCION']));
-    trySet('tipo_propiedad', _pick(props, ['tipo_propiedad', 'TIPO_PROPIEDAD', 'tipo', 'TIPO', 'regimen', 'REGIMEN']));
+    trySet('tipo_propiedad', _normalizeTipoPropiedad(_pick(props, ['tipo_propiedad', 'TIPO_PROPIEDAD', 'tipo', 'TIPO', 'regimen', 'REGIMEN'])));
     trySet('ejido',      _pick(props, ['ejido', 'EJIDO', 'nom_ejido', 'NOM_EJIDO', 'comunidad', 'localidad']));
     trySet('proyecto',   _resolveProyecto(props));
     trySet('propietario_nombre', _pick(props, [
@@ -517,7 +536,7 @@ class SincronizacionService {
     trySet('superficie',    _toDouble(props['superficie']    ?? props['SUPERFICIE']    ?? props['area'] ?? props['AREA'] ?? props['shape_area'] ?? props['SHAPE_AREA'] ?? props['superficie_m2'] ?? props['m2'] ?? props['Area']));
     trySet('uso_suelo',     _pick(props, ['uso_suelo', 'USO_SUELO', 'uso', 'USO', 'land_use', 'LAND_USE']) ?? 'Otro');
     trySet('zona',          _pick(props, ['zona', 'ZONA', 'sector', 'SECTOR', 'region', 'REGION']));
-    trySet('valor_catastral', _toDouble(props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ?? props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO']) ;
+    trySet('valor_catastral', _toDouble(props['valor_catastral'] ?? props['VALOR_CATASTRAL'] ?? props['valor'] ?? props['VALOR'] ?? props['avaluo'] ?? props['AVALUO']));
     trySet('descripcion',   _pick(props, ['descripcion', 'DESCRIPCION', 'description', 'DESCRIPTION']));
     trySet('direccion',     _pick(props, ['direccion', 'DIRECCION', 'domicilio', 'DOMICILIO', 'calle', 'CALLE']));
     trySet('colonia',       _pick(props, ['colonia', 'COLONIA', 'barrio', 'BARRIO']));
@@ -534,6 +553,15 @@ class SincronizacionService {
     trySet('levantamiento',   _toBool(props['levantamiento']));
     trySet('negociacion',    _toBool(props['negociacion']));
     trySet('cop',            _toBool(props['cop']));
+
+    // Tipo de liberación
+    trySet('tipo_liberacion', _pick(props, [
+      'tipo_liberacion', 'TIPO_LIBERACION',
+      'tipo_de_liberacion', 'TIPO_DE_LIBERACION',
+      'liberacion', 'LIBERACION',
+      'tipo_release', 'TIPO_RELEASE',
+      'tipo', 'TIPO',
+    ]));
 
     if (geometry != null && existente['geometry'] == null) {
       updates['geometry']           = geometry;
